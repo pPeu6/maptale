@@ -20,8 +20,11 @@ jogo/
   entrada.py              # teclado + Xbox (pygame.joystick)
   iluminacao.py           # thread serial ON/OFF + overlay escuro
 assets/
-  tiles/                 # chao.png, parede.png, porta.png, janela.png (a fornecer)
-  personagem/             # spritesheet.png (a fornecer)
+  gerador_tiles.py        # gera a pixel art (Pillow) a partir da paleta/especificação
+  preview_tiles.py        # janela Pygame com todos os tiles/quadros lado a lado
+  requirements-assets.txt # Pillow (só para gerar/pré-visualizar os assets)
+  tiles/                  # chao.png, parede.png, porta_*.png, janela_*.png (gerados)
+  personagem/              # <direcao>_<quadro>.png (gerados)
 mapas/                    # JSONs recebidos (gerado em runtime, gitignored)
 systemd/maptale-jogo.service
 ```
@@ -57,16 +60,35 @@ o Pygame):
 python3 servidor.py
 ```
 
-## Assets
+## Assets (pixel art gerada programaticamente)
 
-Os PNGs finais (`chao.png`, `parede.png`, `porta.png`, `janela.png` em
-`assets/tiles/`, e `spritesheet.png` em `assets/personagem/`, grade 2
-colunas [parado, andando] x 4 linhas [baixo, cima, esquerda, direita], cada
-frame do tamanho de um tile) ainda não foram fornecidos. Enquanto isso, o
-jogo desenha retângulos coloridos e um personagem placeholder (círculo com
-indicador de direção) - basta soltar os arquivos nas pastas acima que o
-carregamento automático (`jogo/tiles.py`, `jogo/personagem.py`) passa a
-usá-los.
+Os PNGs em `assets/tiles/` e `assets/personagem/` são gerados por
+`assets/gerador_tiles.py` (usa Pillow), seguindo a direção de arte pixel
+art grayscale (paleta de 7 tons, grade de 16x16, contorno INK de 1px,
+máximo 3 tons de cinza por elemento):
+
+```bash
+pip install -r assets/requirements-assets.txt   # só Pillow, não é preciso no Pi
+python assets/gerador_tiles.py
+```
+
+Isso (re)gera:
+- `assets/tiles/chao.png`, `parede.png`, `porta_horizontal.png`,
+  `porta_vertical.png`, `janela_horizontal.png`, `janela_vertical.png`.
+- `assets/personagem/<direcao>_<quadro>.png` para as 4 direções
+  (`baixo`, `cima`, `esquerda`, `direita`) x 2 quadros (`parado`, `passo`).
+
+Para conferir visualmente sem abrir cada PNG:
+
+```bash
+python assets/preview_tiles.py
+```
+
+`jogo/tiles.py` e `jogo/personagem.py` carregam esses arquivos
+automaticamente (e ampliam de 16px lógico para `TILE_SIZE_PX`, 32px por
+padrão, preservando a proporção do personagem). Se algum PNG estiver
+ausente, o jogo continua funcionando com um placeholder procedural no
+lugar (retângulo colorido / boneco simples).
 
 ## Controle Xbox
 

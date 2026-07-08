@@ -14,8 +14,12 @@ from . import configuracoes as cfg
 _ARQUIVOS_TILE = {
     CHAO: "chao.png",
     PAREDE: "parede.png",
-    PORTA: "porta.png",
-    JANELA: "janela.png",
+    # A grade ainda não distingue orientação de porta/janela (ver
+    # `mapa/grade.py`), então usamos a variante horizontal como padrão.
+    # As variantes verticais (geradas por `assets/gerador_tiles.py`) ficam
+    # disponíveis em disco para quando essa distinção for adicionada.
+    PORTA: "porta_horizontal.png",
+    JANELA: "janela_horizontal.png",
 }
 
 _fonte_objeto: pygame.font.Font | None = None

@@ -1,0 +1,4 @@
+# Dependência apenas para gerar/pré-visualizar os assets (gerador_tiles.py
+# usa Pillow; preview_tiles.py usa o pygame já listado em ../requirements.txt).
+# Não é necessária para rodar o jogo em si no Raspberry Pi.
+Pillow==10.4.0

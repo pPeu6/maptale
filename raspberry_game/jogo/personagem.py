@@ -1,4 +1,4 @@
-"""Personagem controlável: spritesheet de 4 direções (parado/andando) e
+"""Personagem controlável: 4 direções x 2 quadros (parado/passo) e
 movimento com colisão contra a grade (bloqueia em PAREDE/JANELA/OBJETO_*)."""
 
 from __future__ import annotations
@@ -11,18 +11,25 @@ from mapa.grade import GradeMapa
 from . import configuracoes as cfg
 
 DIRECOES = ("baixo", "cima", "esquerda", "direita")
-_LINHA_DIRECAO = {"baixo": 0, "cima": 1, "esquerda": 2, "direita": 3}
+QUADROS = ("parado", "passo")
 _INTERVALO_ANIMACAO_SEG = 0.18
 
+# Dimensões lógicas do personagem, espelhando `assets/gerador_tiles.py`
+# (LARGURA_PERSONAGEM/ALTURA_PERSONAGEM). Mantidas aqui para o motor não
+# depender do módulo de geração de assets em tempo de execução.
+_LARGURA_LOGICA = 16
+_ALTURA_LOGICA = 21
 
-def _frame_placeholder(direcao: str, andando: bool, tamanho: int) -> pygame.Surface:
-    """Gera um quadrado com um pequeno triângulo indicando a direção,
-    usado enquanto o spritesheet final não é fornecido."""
-    superficie = pygame.Surface((tamanho, tamanho), pygame.SRCALPHA)
+
+def _frame_placeholder(direcao: str, andando: bool, largura: int, altura: int) -> pygame.Surface:
+    """Gera um retângulo com um pequeno triângulo indicando a direção,
+    usado enquanto os PNGs finais (`assets/personagem/<direcao>_<quadro>.png`)
+    não foram gerados."""
+    superficie = pygame.Surface((largura, altura), pygame.SRCALPHA)
     cor_corpo = cfg.COR_PLACEHOLDER_PERSONAGEM
-    raio = tamanho // 2 - (2 if andando else 4)
-    centro = (tamanho // 2, tamanho // 2)
-    pygame.draw.circle(superficie, cor_corpo, centro, raio)
+    raio = min(largura, altura) // 2 - (2 if andando else 4)
+    centro = (largura // 2, altura // 2)
+    pygame.draw.circle(superficie, cor_corpo, centro, max(raio, 2))
 
     pontas = {
         "baixo": [(centro[0] - 5, centro[1]), (centro[0] + 5, centro[1]), (centro[0], centro[1] + raio)],
@@ -35,29 +42,30 @@ def _frame_placeholder(direcao: str, andando: bool, tamanho: int) -> pygame.Surf
 
 
 def carregar_frames(tamanho_tile_px: int = cfg.TILE_SIZE_PX) -> dict[str, dict[str, pygame.Surface]]:
-    """Carrega `assets/personagem/spritesheet.png` (grade 2 colunas x 4
-    linhas: parado/andando por direção baixo/cima/esquerda/direita). Se o
-    arquivo não existir, gera placeholders procedurais."""
-    caminho = cfg.PASTA_PERSONAGEM / "spritesheet.png"
+    """Carrega um arquivo por direção/quadro
+    (`assets/personagem/<direcao>_<quadro>.png`, gerados por
+    `assets/gerador_tiles.py`). Se algum arquivo não existir, usa um
+    placeholder procedural no lugar.
+
+    A escala aplicada preserva a proporção original 16x21 do personagem
+    (diferente dos tiles, que são quadrados): o fator de ampliação é o
+    mesmo usado para os tiles (`tamanho_tile_px / TAMANHO_TILE_LOGICO_PX`).
+    """
+    fator_escala = tamanho_tile_px / cfg.TAMANHO_TILE_LOGICO_PX
+    tamanho_alvo = (round(_LARGURA_LOGICA * fator_escala), round(_ALTURA_LOGICA * fator_escala))
+
     frames: dict[str, dict[str, pygame.Surface]] = {d: {} for d in DIRECOES}
 
-    if caminho.exists():
-        folha = pygame.image.load(str(caminho)).convert_alpha()
-        largura_frame = folha.get_width() // 2
-        altura_frame = folha.get_height() // len(DIRECOES)
-        for direcao, linha in _LINHA_DIRECAO.items():
-            for coluna, estado in enumerate(("parado", "andando")):
-                retangulo = pygame.Rect(
-                    coluna * largura_frame, linha * altura_frame, largura_frame, altura_frame
-                )
-                frame = folha.subsurface(retangulo).copy()
-                if frame.get_size() != (tamanho_tile_px, tamanho_tile_px):
-                    frame = pygame.transform.scale(frame, (tamanho_tile_px, tamanho_tile_px))
-                frames[direcao][estado] = frame
-    else:
-        for direcao in DIRECOES:
-            frames[direcao]["parado"] = _frame_placeholder(direcao, False, tamanho_tile_px)
-            frames[direcao]["andando"] = _frame_placeholder(direcao, True, tamanho_tile_px)
+    for direcao in DIRECOES:
+        for quadro in QUADROS:
+            caminho = cfg.PASTA_PERSONAGEM / f"{direcao}_{quadro}.png"
+            if caminho.exists():
+                frame = pygame.image.load(str(caminho)).convert_alpha()
+                if frame.get_size() != tamanho_alvo:
+                    frame = pygame.transform.scale(frame, tamanho_alvo)
+            else:
+                frame = _frame_placeholder(direcao, quadro == "passo", *tamanho_alvo)
+            frames[direcao][quadro] = frame
 
     return frames
 
@@ -69,7 +77,7 @@ class Personagem:
         self.direcao = "baixo"
         self.andando = False
         self._tempo_animacao = 0.0
-        self._frame_andando_visivel = False
+        self._frame_passo_visivel = False
         self.frames = carregar_frames(tamanho_tile_px)
 
     def _colide(self, grade: GradeMapa, x_tiles: float, y_tiles: float) -> bool:
@@ -114,18 +122,22 @@ class Personagem:
     def _atualizar_animacao(self, dt: float) -> None:
         if not self.andando:
             self._tempo_animacao = 0.0
-            self._frame_andando_visivel = False
+            self._frame_passo_visivel = False
             return
 
         self._tempo_animacao += dt
         if self._tempo_animacao >= _INTERVALO_ANIMACAO_SEG:
             self._tempo_animacao = 0.0
-            self._frame_andando_visivel = not self._frame_andando_visivel
+            self._frame_passo_visivel = not self._frame_passo_visivel
 
     def desenhar(self, tela: pygame.Surface, camera_offset_px: tuple[int, int]) -> None:
-        estado = "andando" if (self.andando and self._frame_andando_visivel) else "parado"
-        frame = self.frames[self.direcao][estado]
+        quadro = "passo" if (self.andando and self._frame_passo_visivel) else "parado"
+        frame = self.frames[self.direcao][quadro]
         px = self.x * self.tamanho_tile_px - camera_offset_px[0]
         py = self.y * self.tamanho_tile_px - camera_offset_px[1]
-        rect = frame.get_rect(center=(px, py))
+        # O sprite (16x21 lógico) é mais alto que largo, então ancoramos
+        # pelos "pés" (base do tile atual) em vez do centro geométrico -
+        # caso contrário a cabeça pareceria flutuar acima da posição real.
+        pes_y = py + self.tamanho_tile_px / 2
+        rect = frame.get_rect(midbottom=(px, pes_y))
         tela.blit(frame, rect)

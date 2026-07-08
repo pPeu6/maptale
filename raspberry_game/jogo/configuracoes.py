@@ -11,6 +11,12 @@ FPS = 30
 LARGURA_TELA = 800
 ALTURA_TELA = 480
 
+# Resolução "lógica" em que os assets são desenhados por
+# `assets/gerador_tiles.py` (pixel art 16x16). O motor amplia tudo por
+# TILE_SIZE_PX / TAMANHO_TILE_LOGICO_PX (2x por padrão) ao carregar,
+# preservando a proporção original de sprites não quadrados (personagem).
+TAMANHO_TILE_LOGICO_PX = 16
+
 # --- Caminhos ---
 PASTA_ASSETS = RAIZ_PROJETO / "assets"
 PASTA_TILES = PASTA_ASSETS / "tiles"
