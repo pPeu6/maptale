@@ -3,9 +3,6 @@ __pycache__/
 .venv/
 venv/
 
-# Mapas recebidos via upload (dados de usuário, não versionados)
-mapas/*.json
-
 # Assets finais (PNGs) chegam depois; mantemos apenas os .gitkeep até lá
 assets/tiles/*.png
 assets/personagem/*.png
