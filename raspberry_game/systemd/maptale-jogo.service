@@ -1,0 +1,25 @@
+[Unit]
+Description=Maptale - Jogo Raspberry Pi (Pygame + servidor Flask de upload)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/maptale/raspberry_game
+
+# Se o Pi estiver rodando sem X11/desktop (console/framebuffer direto),
+# descomente as duas linhas abaixo e ajuste o driver conforme seu setup
+# (fbcon costuma funcionar bem em Raspberry Pi OS Lite):
+# Environment=SDL_VIDEODRIVER=fbcon
+# Environment=SDL_FBDEV=/dev/fb0
+
+ExecStart=/usr/bin/python3 jogo/principal.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

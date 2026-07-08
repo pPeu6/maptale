@@ -1,0 +1,98 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://maptale.local/schema/mapa.schema.json",
+  "title": "MapaAmbiente",
+  "description": "Contrato de dados compartilhado entre o app mobile (Flutter/AR) e o jogo do Raspberry Pi (Python/Pygame). Coordenadas x,y sao expressas em metros, no plano top-down, relativas ao primeiro ponto marcado durante o escaneamento.",
+  "type": "object",
+  "required": [
+    "nome_ambiente",
+    "escala_metros_por_tile",
+    "paredes",
+    "portas",
+    "janelas",
+    "objetos"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "nome_ambiente": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Nome/identificador do ambiente escaneado, usado tambem como nome do arquivo salvo no servidor."
+    },
+    "escala_metros_por_tile": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Quantos metros do mundo real equivalem a um tile da grade do jogo."
+    },
+    "paredes": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/segmento" }
+    },
+    "portas": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/aberturaComLargura" }
+    },
+    "janelas": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/aberturaComLargura" }
+    },
+    "objetos": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/objeto" }
+    }
+  },
+  "definitions": {
+    "ponto2d": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "segmento": {
+      "type": "object",
+      "required": ["inicio", "fim"],
+      "additionalProperties": false,
+      "properties": {
+        "inicio": { "$ref": "#/definitions/ponto2d" },
+        "fim": { "$ref": "#/definitions/ponto2d" }
+      }
+    },
+    "aberturaComLargura": {
+      "type": "object",
+      "required": ["posicao", "largura"],
+      "additionalProperties": false,
+      "properties": {
+        "posicao": { "$ref": "#/definitions/ponto2d" },
+        "largura": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "objeto": {
+      "type": "object",
+      "required": ["tipo", "posicao"],
+      "additionalProperties": false,
+      "properties": {
+        "tipo": { "type": "string", "minLength": 1 },
+        "posicao": { "$ref": "#/definitions/ponto2d" }
+      }
+    }
+  },
+  "examples": [
+    {
+      "nome_ambiente": "sala_teste",
+      "escala_metros_por_tile": 0.1,
+      "paredes": [
+        { "inicio": [0.0, 0.0], "fim": [4.0, 0.0] },
+        { "inicio": [4.0, 0.0], "fim": [4.0, 3.0] }
+      ],
+      "portas": [
+        { "posicao": [2.0, 0.0], "largura": 0.8 }
+      ],
+      "janelas": [
+        { "posicao": [4.0, 1.5], "largura": 1.2 }
+      ],
+      "objetos": [
+        { "tipo": "sofa", "posicao": [1.0, 1.0] }
+      ]
+    }
+  ]
+}
