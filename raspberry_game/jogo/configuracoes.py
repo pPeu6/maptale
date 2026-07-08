@@ -29,7 +29,7 @@ TAMANHO_COLISAO_TILES = 0.6  # bounding box do personagem, em tiles
 DEADZONE_JOYSTICK = 0.2
 
 # --- Serial (Arduino) ---
-PORTA_SERIAL = "/dev/ttyACM0"
+PORTA_SERIAL = "/dev/ttyUSB0"
 BAUDRATE_SERIAL = 9600
 INTERVALO_RECONEXAO_SERIAL_SEG = 3.0
 
