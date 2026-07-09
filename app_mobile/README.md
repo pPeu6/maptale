@@ -38,6 +38,15 @@ flutter create . --platforms=android,ios --org com.maptale
 flutter pub get
 ```
 
+No Windows, o plugin AR exige **Java 17**. Se o build falhar com
+`Cannot find a Java installation ... languageVersion=17`, rode uma vez:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup_jdk.ps1
+```
+
+O script baixa um JDK 17 local em `.jdk/` e configura o Gradle/Flutter.
+
 Depois de gerar as pastas nativas, aplique as configurações abaixo.
 
 ### Android (`android/app/`)
@@ -80,6 +89,42 @@ flutter run
 
 Configure o IP do servidor Flask (rodando no Raspberry Pi, porta `5000`
 por padrão) na tela de Configurações antes de enviar um mapa.
+
+## Emulador Android + ARCore
+
+A documentação do ARCore pede **API 27+**, mas isso não significa que
+qualquer emulador recente funciona. O ARCore no emulador só aceita imagens
+**x86_64 com Google Play**, **sem tradução ARM** e **sem Page Size 16KB**.
+
+O emulador padrão do Android Studio (API 37 + `ps16k`) aparece como
+incompatível com ARCore — isso é esperado, não é bug do app.
+
+### Emulador recomendado
+
+Instale a imagem pelo **Android Studio** (o download via terminal costuma travar):
+
+1. **Settings → Android SDK → SDK Platforms** → marque *Show Package Details*
+2. Em **Android 13 (API 33)**, selecione **Google Play Intel x86_64 Atom System Image**
+3. **Não** escolha imagens com **16 KB Page Size**
+4. Apply → OK
+
+Depois rode:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup_emulador_ar.ps1
+flutter emulators --launch Pixel_5_ARCore
+flutter run -d Pixel_5_ARCore
+```
+
+**Alternativa imediata:** celular físico via USB (`flutter run` e escolha o SM A035M).
+
+No emulador, abra **Extended controls > Camera** e defina a câmera traseira
+como **VirtualScene** (cena 3D simulada para AR).
+
+### Celular físico
+
+Para testes reais de AR, prefira um aparelho da
+[lista de dispositivos suportados pelo ARCore](https://developers.google.com/ar/devices).
 
 ## Placeholders visuais
 
