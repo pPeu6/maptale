@@ -1,11 +1,9 @@
-"""Gera programaticamente os assets pixel art do jogo (Pillow).
+"""Gera os sprites de móveis e do personagem (Pillow), em pixel art.
 
-Direção de arte:
-- Grade de tile: 16x16 pixels lógicos.
-- Personagem: 16x21, 2 quadros de caminhada por direção.
-- Contorno: 1 pixel lógico INK.
-- Paredes lisas (sem tijolos); móveis com textura de madeira.
-- Sem anti-aliasing / gradientes suaves.
+As paredes, portas, janelas e piso NÃO são mais tiles PNG: são desenhados
+proceduralmente pelo motor (`jogo/tiles.py`) como linhas finas / preenchimentos.
+Aqui geramos apenas os móveis (vista top-down, madeira/cerâmica) e o
+personagem (humano detalhado, pele clara, cabelo e barba loiros).
 
 Rodar: `python assets/gerador_tiles.py`
 """
@@ -20,20 +18,47 @@ from PIL import Image, ImageDraw
 
 PALETA_HEX = {
     "VOID": "#0c0c0d",
-    "INK": "#1c1c1e",
-    "SLATE": "#48484c",
-    "MID": "#5c5c60",
+    "INK": "#20160c",
     "ASH": "#8c8c90",
-    "FOG": "#cccccf",
     "BONE": "#f4f4f2",
     # Madeira (móveis)
-    "WOOD_DARK": "#3d2415",
-    "WOOD": "#6b3f22",
-    "WOOD_LIGHT": "#a06a3c",
-    # Banheiro / metal
-    "STEEL": "#6e7278",
-    "STEEL_DARK": "#3a3d42",
-    "CERAMIC": "#e8e6e0",
+    "WOOD_DARK": "#5a3413",
+    "WOOD_SHADOW": "#3f220d",
+    "WOOD": "#8a5222",
+    "WOOD_MID": "#9e642e",
+    "WOOD_LIGHT": "#b57a3c",
+    "WOOD_GOLD": "#d09a57",
+    # Cerâmica / metal (banheiro, monitor)
+    "STEEL": "#8b9199",
+    "STEEL_DARK": "#4a4f57",
+    "STEEL_LIGHT": "#c5cbd0",
+    "CERAMIC": "#f2f0ea",
+    "CERAMIC_SH": "#d3d1c8",
+    "CERAMIC_HI": "#fffefa",
+    "CERAMIC_DARK": "#aaa9a2",
+    "GLASS": "#bfe6f2",
+    "WATER": "#73c8e6",
+    # Mesa branca + monitor
+    "DESK": "#eef1f4",
+    "DESK_SH": "#c8ccd2",
+    "SCREEN": "#2f6fb0",
+    # Roupa de cama
+    "LINEN": "#efe7d6",
+    "QUILT": "#5aa0a0",
+    "QUILT_DARK": "#3f7d7d",
+    # Personagem
+    "SKIN": "#f2c49a",
+    "SKIN_SH": "#d7a276",
+    "HAIR": "#e6bf5a",
+    "HAIR_SH": "#c39a3c",
+    "BEARD": "#d9b24e",
+    "EYE": "#2f5aa8",
+    "MOUTH": "#a85742",
+    "SHIRT": "#4a86c5",
+    "SHIRT_SH": "#2f5f92",
+    "PANTS": "#3b4a63",
+    "PANTS_SH": "#2a3548",
+    "SHOE": "#2a1c12",
 }
 
 
@@ -47,286 +72,231 @@ PALETA: dict[str, tuple[int, int, int, int]] = {
     nome: _hex_para_rgba(valor) for nome, valor in PALETA_HEX.items()
 }
 
-TAMANHO_TILE = 16
+TILE = 16
 LARGURA_PERSONAGEM = 16
 ALTURA_PERSONAGEM = 21
 
 PASTA_ASSETS = Path(__file__).resolve().parent
-PASTA_TILES = PASTA_ASSETS / "tiles"
-PASTA_OBJETOS = PASTA_TILES / "objetos"
+PASTA_OBJETOS = PASTA_ASSETS / "tiles" / "objetos"
 PASTA_PERSONAGEM = PASTA_ASSETS / "personagem"
 
 
-# ==============================================================================
-# Helpers
-# ==============================================================================
+# --- Helpers ------------------------------------------------------------------
 
 
-def nova_tile(cor_base: str) -> Image.Image:
-    return Image.new("RGBA", (TAMANHO_TILE, TAMANHO_TILE), PALETA[cor_base])
+def _img(largura: int, altura: int) -> Image.Image:
+    return Image.new("RGBA", (largura, altura), (0, 0, 0, 0))
 
 
-def nova_imagem(largura: int, altura: int, cor: str | None = None) -> Image.Image:
-    fill = PALETA[cor] if cor else (0, 0, 0, 0)
-    return Image.new("RGBA", (largura, altura), fill)
-
-
-def desenhar_retangulo(
-    desenho: ImageDraw.ImageDraw,
-    caixa: tuple[int, int, int, int],
-    cor_preenchimento: str | None,
-    cor_contorno: str | None = "INK",
-) -> None:
-    desenho.rectangle(
+def _rect(d, caixa, cor, contorno="INK") -> None:
+    d.rectangle(
         caixa,
-        fill=PALETA[cor_preenchimento] if cor_preenchimento else None,
-        outline=PALETA[cor_contorno] if cor_contorno else None,
+        fill=PALETA[cor] if cor else None,
+        outline=PALETA[contorno] if contorno else None,
         width=1,
     )
 
 
-def desenhar_contorno_tile(desenho: ImageDraw.ImageDraw, tamanho: int = TAMANHO_TILE) -> None:
-    desenho.rectangle((0, 0, tamanho - 1, tamanho - 1), outline=PALETA["INK"], width=1)
+def _linha(d, pontos, cor) -> None:
+    d.line(pontos, fill=PALETA[cor], width=1)
 
 
-def linha(desenho: ImageDraw.ImageDraw, pontos: list[tuple[int, int]], cor: str) -> None:
-    desenho.line(pontos, fill=PALETA[cor], width=1)
+def _ponto(d, pontos, cor) -> None:
+    d.point(pontos, fill=PALETA[cor])
 
 
-def ponto(desenho: ImageDraw.ImageDraw, pontos: list[tuple[int, int]], cor: str) -> None:
-    desenho.point(pontos, fill=PALETA[cor])
-
-
-def _rotacionar_se_vertical(imagem: Image.Image, orientacao: str) -> Image.Image:
-    if orientacao not in ("horizontal", "vertical"):
-        raise ValueError(f"orientacao inválida: {orientacao!r}")
-    return imagem.rotate(90, expand=False) if orientacao == "vertical" else imagem
-
-
-def _textura_madeira(desenho: ImageDraw.ImageDraw, x0: int, y0: int, x1: int, y1: int) -> None:
-    """Preenche retângulo com madeira + veios horizontais (máx. 3 tons)."""
-    desenho.rectangle((x0, y0, x1, y1), fill=PALETA["WOOD"])
-    for y in range(y0 + 2, y1, 3):
-        linha(desenho, [(x0 + 1, y), (x1 - 1, y)], "WOOD_DARK")
-    # bisel claro no topo
+def _madeira(d, x0, y0, x1, y1, contorno=True) -> None:
+    """Madeira em várias camadas: base, ripas, veios e brilho de borda."""
+    d.rectangle((x0, y0, x1, y1), fill=PALETA["WOOD_MID"])
+    for y in range(y0 + 2, y1, 4):
+        _linha(d, [(x0 + 1, y), (x1 - 1, y)], "WOOD_DARK")
+        if y + 1 < y1:
+            _linha(d, [(x0 + 2, y + 1), (x1 - 2, y + 1)], "WOOD")
+    # Veios curtos e deslocados para não parecer uma grade uniforme.
+    largura = max(1, x1 - x0 - 3)
+    for i, y in enumerate(range(y0 + 3, y1, 7)):
+        inicio = x0 + 2 + (i * 7) % max(1, largura // 2)
+        fim = min(x1 - 2, inicio + max(3, largura // 3))
+        _linha(d, [(inicio, y), (fim, y)], "WOOD_GOLD")
     if y1 - y0 > 2:
-        linha(desenho, [(x0 + 1, y0 + 1), (x1 - 1, y0 + 1)], "WOOD_LIGHT")
+        _linha(d, [(x0 + 1, y0 + 1), (x1 - 1, y0 + 1)], "WOOD_LIGHT")
+        _linha(d, [(x1 - 1, y0 + 1), (x1 - 1, y1 - 1)], "WOOD_SHADOW")
+    if contorno:
+        d.rectangle((x0, y0, x1, y1), outline=PALETA["INK"], width=1)
 
 
-# ==============================================================================
-# Tiles base
-# ==============================================================================
+# --- Móveis do quarto ---------------------------------------------------------
 
 
-def gerar_tile_chao() -> Image.Image:
-    imagem = nova_tile("FOG")
-    desenho = ImageDraw.Draw(imagem)
-    for posicao in (0, 8):
-        linha(desenho, [(posicao, 0), (posicao, TAMANHO_TILE - 1)], "ASH")
-        linha(desenho, [(0, posicao), (TAMANHO_TILE - 1, posicao)], "ASH")
-    return imagem
+def gerar_guarda_roupa(lt: int = 2, at: int = 8) -> Image.Image:
+    """Encostado na parede esquerda; vista de cima (topo do armário, sem
+    portas - elas ficam na frente)."""
+    w, h = lt * TILE, at * TILE
+    img = _img(w, h)
+    d = ImageDraw.Draw(img)
+    _madeira(d, 0, 0, w - 1, h - 1)
+    # Tampo visto de cima: moldura, junções e borda frontal chanfrada.
+    _linha(d, [(3, 2), (w - 5, 2)], "WOOD_GOLD")
+    _linha(d, [(3, h - 3), (w - 5, h - 3)], "WOOD_SHADOW")
+    for y in range(TILE, h, TILE):
+        _linha(d, [(2, y), (w - 5, y)], "WOOD_DARK")
+    d.rectangle((w - 5, 1, w - 2, h - 2), fill=PALETA["WOOD_DARK"])
+    _linha(d, [(w - 4, 2), (w - 4, h - 3)], "WOOD_LIGHT")
+    return img
 
 
-def gerar_tile_parede() -> Image.Image:
-    """Parede lisa: SLATE + bisel ASH + contorno INK (sem tijolos)."""
-    imagem = nova_tile("SLATE")
-    desenho = ImageDraw.Draw(imagem)
-    linha(desenho, [(1, 1), (TAMANHO_TILE - 2, 1)], "ASH")
-    linha(desenho, [(1, TAMANHO_TILE - 2), (TAMANHO_TILE - 2, TAMANHO_TILE - 2)], "MID")
-    desenhar_contorno_tile(desenho)
-    return imagem
+def gerar_cama(lt: int = 5, at: int = 5) -> Image.Image:
+    """Cabeceira de madeira mais larga que a cama, com dois criados-mudos
+    integrados nas laterais; colchão com travesseiro e edredom."""
+    w, h = lt * TILE, at * TILE
+    img = _img(w, h)
+    d = ImageDraw.Draw(img)
 
+    cab = 12  # altura da cabeceira
+    ns = 17   # largura de cada criado-mudo
 
-def gerar_tile_porta(orientacao: str = "horizontal") -> Image.Image:
-    imagem = gerar_tile_parede()
-    desenho = ImageDraw.Draw(imagem)
-    _textura_madeira(desenho, 3, 2, 12, 15)
-    desenho.rectangle((3, 2, 12, 15), outline=PALETA["INK"], width=1)
-    desenho.rectangle((9, 8, 10, 9), fill=PALETA["BONE"])
-    return _rotacionar_se_vertical(imagem, orientacao)
+    # Cabeceira (largura total, passa da cama)
+    _madeira(d, 0, 0, w - 1, cab - 1)
 
-
-def gerar_tile_janela(orientacao: str = "horizontal") -> Image.Image:
-    imagem = gerar_tile_parede()
-    desenho = ImageDraw.Draw(imagem)
-    caixa_vidro = (3, 3, 12, 12)
-    desenhar_retangulo(desenho, caixa_vidro, cor_preenchimento="BONE", cor_contorno="INK")
-    centro_x = (caixa_vidro[0] + caixa_vidro[2]) // 2
-    centro_y = (caixa_vidro[1] + caixa_vidro[3]) // 2
-    linha(desenho, [(centro_x, caixa_vidro[1] + 1), (centro_x, caixa_vidro[3] - 1)], "INK")
-    linha(desenho, [(caixa_vidro[0] + 1, centro_y), (caixa_vidro[2] - 1, centro_y)], "INK")
-    linha(desenho, [(4, 6), (6, 4)], "FOG")
-    return _rotacionar_se_vertical(imagem, orientacao)
-
-
-# ==============================================================================
-# Móveis / banheiro (sprites multi-tile em px lógicos = tiles * 16)
-# ==============================================================================
-
-
-def gerar_guarda_roupa(largura_tiles: int = 2, altura_tiles: int = 5) -> Image.Image:
-    """Guarda-roupa de 6 portas: esq / meio (vidro) / dir, empilhadas em 2 colunas."""
-    w, h = largura_tiles * TAMANHO_TILE, altura_tiles * TAMANHO_TILE
-    imagem = nova_imagem(w, h)
-    desenho = ImageDraw.Draw(imagem)
-    _textura_madeira(desenho, 0, 0, w - 1, h - 1)
-    desenho.rectangle((0, 0, w - 1, h - 1), outline=PALETA["INK"], width=1)
-
-    # 3 faixas verticais de portas (cada uma com 2 portas empilhadas)
-    faixa = w // 3
-    for i in range(1, 3):
-        x = i * faixa
-        linha(desenho, [(x, 1), (x, h - 2)], "WOOD_DARK")
-
-    meio = h // 2
-    linha(desenho, [(1, meio), (w - 2, meio)], "WOOD_DARK")
-
-    # Portas do meio = vidro (faixa central)
-    x0, x1 = faixa + 1, 2 * faixa - 1
-    for y0, y1 in ((1, meio - 1), (meio + 1, h - 2)):
-        desenhar_retangulo(desenho, (x0, y0, x1, y1), "BONE", "INK")
-        # cruzeta leve no vidro
-        cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
-        linha(desenho, [(cx, y0 + 1), (cx, y1 - 1)], "ASH")
-        linha(desenho, [(x0 + 1, cy), (x1 - 1, cy)], "ASH")
-
-    # Puxadores nas portas de madeira
-    for i in (0, 2):
-        px = i * faixa + faixa // 2
-        for py in (meio // 2, meio + meio // 2):
-            desenho.rectangle((px, py, px + 1, py + 1), fill=PALETA["BONE"])
-
-    return imagem
-
-
-def gerar_cama(largura_tiles: int = 3, altura_tiles: int = 5) -> Image.Image:
-    """Cama com cabeceira mais larga que o colchão."""
-    w, h = largura_tiles * TAMANHO_TILE, altura_tiles * TAMANHO_TILE
-    imagem = nova_imagem(w, h)
-    desenho = ImageDraw.Draw(imagem)
-
-    # Cabeceira (mais larga: ocupa toda a largura, 4px de altura)
-    altura_cab = 5
-    _textura_madeira(desenho, 0, 0, w - 1, altura_cab - 1)
-    desenho.rectangle((0, 0, w - 1, altura_cab - 1), outline=PALETA["INK"], width=1)
-
-    # Colchão um pouco mais estreito (inset 2px cada lado)
-    inset = 2
-    _textura_madeira(desenho, inset, altura_cab, w - 1 - inset, h - 1)
-    desenho.rectangle((inset, altura_cab, w - 1 - inset, h - 1), outline=PALETA["INK"], width=1)
-
+    # Colchão (centro, entre os criados-mudos)
+    mx0, mx1 = ns, w - 1 - ns
+    _rect(d, (mx0, cab, mx1, h - 1), "LINEN")
     # Travesseiro
-    desenhar_retangulo(
-        desenho,
-        (inset + 3, altura_cab + 2, w - inset - 4, altura_cab + 7),
-        "CERAMIC",
-        "INK",
-    )
-    # Dobra do lençol
-    linha(desenho, [(inset + 1, h - 6), (w - inset - 2, h - 6)], "WOOD_LIGHT")
-    return imagem
+    _rect(d, (mx0 + 4, cab + 3, mx1 - 4, cab + 15), "CERAMIC")
+    # Edredom
+    _rect(d, (mx0, cab + 20, mx1, h - 2), "QUILT")
+    _linha(d, [(mx0 + 1, cab + 20), (mx1 - 1, cab + 20)], "QUILT_DARK")
+    # Costuras acolchoadas e dobras dão volume ao tecido.
+    for y in range(cab + 28, h - 3, 10):
+        _linha(d, [(mx0 + 2, y), (mx1 - 2, y)], "QUILT_DARK")
+    for x in range(mx0 + 10, mx1, 12):
+        _linha(d, [(x, cab + 21), (x, h - 3)], "GLASS")
+    _linha(d, [(mx0 + 2, cab + 1), (mx1 - 2, cab + 1)], "CERAMIC_HI")
+
+    # Criados-mudos (laterais, abaixo da cabeceira)
+    for x0 in (0, w - ns):
+        _madeira(d, x0, cab, x0 + ns - 1, cab + ns - 1)
+        cx = x0 + ns // 2
+        d.rectangle((cx - 1, cab + ns // 2, cx + 1, cab + ns // 2 + 1), fill=PALETA["BONE"])
+    return img
 
 
-def gerar_mesa_cabeceira(largura_tiles: int = 2, altura_tiles: int = 2) -> Image.Image:
-    w, h = largura_tiles * TAMANHO_TILE, altura_tiles * TAMANHO_TILE
-    imagem = nova_imagem(w, h)
-    desenho = ImageDraw.Draw(imagem)
-    _textura_madeira(desenho, 1, 1, w - 2, h - 2)
-    desenho.rectangle((1, 1, w - 2, h - 2), outline=PALETA["INK"], width=1)
-    # gaveta
-    linha(desenho, [(3, h // 2), (w - 4, h // 2)], "WOOD_DARK")
-    desenho.rectangle((w // 2 - 1, h // 2 + 1, w // 2 + 1, h // 2 + 2), fill=PALETA["BONE"])
-    return imagem
+def gerar_mesa_pc(lt: int = 6, at: int = 2) -> Image.Image:
+    """Mesa BRANCA encostada na parede de baixo, centralizada. Monitor
+    encostado na parede (borda inferior), gabinete do PC no lado esquerdo,
+    teclado à frente."""
+    w, h = lt * TILE, at * TILE
+    img = _img(w, h)
+    d = ImageDraw.Draw(img)
+
+    _rect(d, (0, 2, w - 1, h - 1), "DESK")
+    _linha(d, [(1, 3), (w - 2, 3)], "CERAMIC_HI")
+    _linha(d, [(1, h - 3), (w - 2, h - 3)], "DESK_SH")
+    for x in range(16, w, 16):
+        _linha(d, [(x, 4), (x, h - 4)], "DESK_SH")
+
+    mx = w // 2
+
+    _rect(d, (mx - 13, h - 12, mx + 13, h - 2), "STEEL_DARK")
+    _rect(d, (mx - 11, h - 10, mx + 11, h - 4), "SCREEN")
+    _linha(d, [(mx - 9, h - 9), (mx + 8, h - 9)], "GLASS")
+    _ponto(d, [(mx + 10, h - 3)], "WATER")
+
+    _rect(d, (3, 4, 15, h - 3), "STEEL_DARK")
+    _linha(d, [(6, 6), (12, 6)], "STEEL")
+    _linha(d, [(5, h - 6), (13, h - 6)], "STEEL")
+    _ponto(d, [(9, 9)], "SCREEN")
+
+    _rect(d, (mx - 12, 4, mx + 12, 9), "DESK_SH")
+    for x in range(mx - 9, mx + 10, 4):
+        _ponto(d, [(x, 6), (x, 8)], "STEEL_DARK")
+    return img
 
 
-def gerar_mesa_pc(largura_tiles: int = 5, altura_tiles: int = 2) -> Image.Image:
-    """Mesa com monitor no centro e gabinete no lado do guarda-roupa (esq.)."""
-    w, h = largura_tiles * TAMANHO_TILE, altura_tiles * TAMANHO_TILE
-    imagem = nova_imagem(w, h)
-    desenho = ImageDraw.Draw(imagem)
-
-    # Tampo
-    _textura_madeira(desenho, 0, h // 2 - 2, w - 1, h - 1)
-    desenho.rectangle((0, h // 2 - 2, w - 1, h - 1), outline=PALETA["INK"], width=1)
-
-    # Monitor (centro)
-    mx0 = w // 2 - 8
-    mx1 = w // 2 + 7
-    desenhar_retangulo(desenho, (mx0, 1, mx1, h // 2 - 3), "STEEL_DARK", "INK")
-    desenhar_retangulo(desenho, (mx0 + 2, 3, mx1 - 2, h // 2 - 5), "STEEL", "INK")
-    # base do monitor
-    linha(desenho, [(w // 2, h // 2 - 3), (w // 2, h // 2 - 2)], "INK")
-
-    # Gabinete no lado do guarda-roupa (esquerda no top-down da planta)
-    gx0 = 2
-    desenhar_retangulo(desenho, (gx0, h // 2 - 1, gx0 + 10, h - 2), "STEEL_DARK", "INK")
-    ponto(desenho, [(gx0 + 3, h // 2 + 2), (gx0 + 5, h // 2 + 2)], "BONE")
-    return imagem
+# --- Banheiro -----------------------------------------------------------------
 
 
-def gerar_pia_banheiro(largura_tiles: int = 2, altura_tiles: int = 2) -> Image.Image:
-    w, h = largura_tiles * TAMANHO_TILE, altura_tiles * TAMANHO_TILE
-    imagem = nova_imagem(w, h)
-    desenho = ImageDraw.Draw(imagem)
-    _textura_madeira(desenho, 1, 1, w - 2, h - 2)
-    desenho.rectangle((1, 1, w - 2, h - 2), outline=PALETA["INK"], width=1)
-    # Pia (círculo branco)
-    cx, cy = w // 2, h // 2
-    r = min(w, h) // 3
-    desenho.ellipse((cx - r, cy - r, cx + r, cy + r), fill=PALETA["CERAMIC"], outline=PALETA["INK"])
-    ponto(desenho, [(cx, cy)], "ASH")  # ralo da pia
-    return imagem
+def gerar_chuveiro(lt: int = 2, at: int = 2) -> Image.Image:
+    """Chuveiro elétrico branco preso à parede esquerda, como na referência."""
+    w, h = lt * TILE, at * TILE
+    img = _img(w, h)
+    d = ImageDraw.Draw(img)
+
+    # Cano horizontal saindo da parede e corpo cilíndrico branco.
+    _rect(d, (0, 5, 13, 8), "CERAMIC")
+    _linha(d, [(1, 5), (12, 5)], "CERAMIC_HI")
+    _rect(d, (12, 2, 23, 12), "CERAMIC")
+    d.ellipse((13, 8, 22, 15), fill=PALETA["CERAMIC_SH"], outline=PALETA["INK"])
+    d.ellipse((15, 10, 20, 14), fill=PALETA["STEEL_DARK"])
+    # Fiação azul e gotas d'água.
+    _linha(d, [(5, 3), (10, 1), (15, 2)], "SCREEN")
+    for x, y in ((15, 16), (18, 18), (21, 16), (16, 21), (20, 22)):
+        _ponto(d, [(x, y)], "WATER")
+    # Ralo separado no piso, canto oposto do box, com grelha.
+    d.ellipse((w - 9, h - 9, w - 2, h - 2), fill=PALETA["STEEL"], outline=PALETA["INK"])
+    _linha(d, [(w - 7, h - 7), (w - 4, h - 4)], "STEEL_DARK")
+    _linha(d, [(w - 4, h - 7), (w - 7, h - 4)], "STEEL_DARK")
+    return img
 
 
-def gerar_vaso(largura_tiles: int = 2, altura_tiles: int = 2) -> Image.Image:
-    w, h = largura_tiles * TAMANHO_TILE, altura_tiles * TAMANHO_TILE
-    imagem = nova_imagem(w, h)
-    desenho = ImageDraw.Draw(imagem)
-    # caixa
-    desenhar_retangulo(desenho, (w // 2 - 4, 1, w // 2 + 4, 6), "CERAMIC", "INK")
-    # assento
-    desenho.ellipse((2, 5, w - 3, h - 2), fill=PALETA["STEEL"], outline=PALETA["INK"])
-    desenho.ellipse((5, 8, w - 6, h - 5), fill=PALETA["STEEL_DARK"], outline=PALETA["INK"])
-    return imagem
+def gerar_vaso(lt: int = 1, at: int = 1) -> Image.Image:
+    """Vaso muito compacto, encostado à esquerda e voltado para a direita."""
+    w, h = lt * TILE, at * TILE
+    img = _img(w, h)
+    d = ImageDraw.Draw(img)
+
+    # Caixa à esquerda (parede) e bacia apontando para a direita.
+    _rect(d, (0, 3, 5, h - 4), "CERAMIC")
+    _linha(d, [(1, 4), (4, 4)], "CERAMIC_HI")
+    d.ellipse((4, 2, w - 2, h - 3), fill=PALETA["CERAMIC_HI"], outline=PALETA["INK"])
+    d.ellipse((7, 5, w - 4, h - 6), fill=PALETA["CERAMIC_SH"], outline=PALETA["STEEL"])
+    _ponto(d, [(3, h // 2)], "STEEL")
+    return img
 
 
-def gerar_chuveiro(largura_tiles: int = 2, altura_tiles: int = 2) -> Image.Image:
-    w, h = largura_tiles * TAMANHO_TILE, altura_tiles * TAMANHO_TILE
-    imagem = nova_imagem(w, h)
-    desenho = ImageDraw.Draw(imagem)
-    # haste da parede (esquerda) até o centro
-    linha(desenho, [(1, h // 2), (w // 2 - 4, h // 2)], "STEEL")
-    # cabeça do chuveiro
-    cx, cy = w // 2, h // 2
-    desenho.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), fill=PALETA["STEEL"], outline=PALETA["INK"])
-    ponto(desenho, [(cx - 2, cy), (cx + 2, cy), (cx, cy - 2), (cx, cy + 2)], "STEEL_DARK")
-    return imagem
+def gerar_pia_banheiro(lt: int = 1, at: int = 1) -> Image.Image:
+    """Gabinete marrom compacto, com frente à direita e cuba sobreposta."""
+    w, h = lt * TILE, at * TILE
+    img = _img(w, h)
+    d = ImageDraw.Draw(img)
+
+    # Madeira continua predominante, usando a textura original de ripas/veios.
+    _madeira(d, 0, 0, w - 1, h - 1)
+    # Cuba quadrada menor, deixando a madeira visível em toda a volta.
+    _rect(d, (3, 2, 11, 10), "CERAMIC")
+    _rect(d, (5, 4, 9, 8), "CERAMIC_SH", None)
+    _ponto(d, [(7, 7)], "STEEL_DARK")
+    # Torneira e borda frontal (lado direito).
+    _linha(d, [(7, 1), (10, 1), (10, 4)], "STEEL_LIGHT")
+    _linha(d, [(w - 3, 1), (w - 3, h - 2)], "WOOD_GOLD")
+    _linha(d, [(w - 2, 1), (w - 2, h - 2)], "WOOD_SHADOW")
+    return img
 
 
-def gerar_ralo(largura_tiles: int = 1, altura_tiles: int = 1) -> Image.Image:
-    w, h = largura_tiles * TAMANHO_TILE, altura_tiles * TAMANHO_TILE
-    imagem = nova_imagem(w, h)
-    desenho = ImageDraw.Draw(imagem)
-    cx, cy = w // 2, h // 2
-    desenho.ellipse((cx - 3, cy - 3, cx + 3, cy + 3), fill=PALETA["INK"], outline=PALETA["STEEL_DARK"])
-    ponto(desenho, [(cx, cy)], "STEEL")
-    return imagem
-
-
-# ==============================================================================
-# Personagem
-# ==============================================================================
+# --- Personagem ---------------------------------------------------------------
 
 QUADROS = ("parado", "passo")
 DIRECOES = ("baixo", "cima", "esquerda", "direita")
 
-_PERNAS_POR_QUADRO = {
-    "parado": {"esquerda": (4, 16, 6, 20), "direita": (9, 16, 11, 20)},
-    "passo": {"esquerda": (4, 15, 6, 19), "direita": (9, 17, 11, 20)},
+_PERNAS = {
+    "parado": ((5, 15, 7, 20), (9, 15, 11, 20)),
+    "passo": ((5, 15, 7, 20), (9, 16, 11, 20)),
 }
 
-_CAIXA_CORPO = (3, 7, 12, 15)
-_CAIXA_CABECA = (4, 0, 11, 7)
+
+def _corpo_e_pernas(d, quadro: str) -> None:
+    # Tronco (camisa)
+    _rect(d, (3, 8, 12, 15), "SHIRT")
+    _linha(d, [(3, 15), (12, 15)], "SHIRT_SH")
+    # Mãos (pele) nas laterais
+    d.rectangle((3, 12, 4, 14), fill=PALETA["SKIN"])
+    d.rectangle((11, 12, 12, 14), fill=PALETA["SKIN"])
+    # Pernas (calça) + sapatos
+    esq, dir_ = _PERNAS[quadro]
+    for perna in (esq, dir_):
+        d.rectangle(perna, fill=PALETA["PANTS"])
+        x0, y0, x1, y1 = perna
+        d.rectangle((x0, y1 - 1, x1, y1), fill=PALETA["SHOE"])
 
 
 def gerar_personagem(quadro: str, direcao: str = "baixo") -> Image.Image:
@@ -338,64 +308,65 @@ def gerar_personagem(quadro: str, direcao: str = "baixo") -> Image.Image:
     if direcao == "esquerda":
         return gerar_personagem(quadro, "direita").transpose(Image.FLIP_LEFT_RIGHT)
 
-    imagem = nova_imagem(LARGURA_PERSONAGEM, ALTURA_PERSONAGEM)
-    desenho = ImageDraw.Draw(imagem)
+    img = _img(LARGURA_PERSONAGEM, ALTURA_PERSONAGEM)
+    d = ImageDraw.Draw(img)
 
-    pernas = _PERNAS_POR_QUADRO[quadro]
-    desenho.rectangle(pernas["esquerda"], fill=PALETA["INK"])
-    desenho.rectangle(pernas["direita"], fill=PALETA["INK"])
-
-    desenhar_retangulo(desenho, _CAIXA_CORPO, cor_preenchimento="SLATE", cor_contorno="INK")
-    desenho.ellipse(_CAIXA_CABECA, fill=PALETA["SLATE"], outline=PALETA["INK"], width=1)
+    _corpo_e_pernas(d, quadro)
 
     if direcao == "baixo":
-        ponto(desenho, [(6, 3), (9, 3)], "INK")
-    elif direcao == "direita":
-        ponto(desenho, [(9, 3)], "INK")
+        # Cabelo (loiro, médio) cobrindo topo e laterais
+        _rect(d, (4, 0, 11, 3), "HAIR", None)
+        d.rectangle((4, 3, 5, 6), fill=PALETA["HAIR"])
+        d.rectangle((10, 3, 11, 6), fill=PALETA["HAIR"])
+        # Rosto
+        _rect(d, (5, 2, 10, 8), "SKIN", None)
+        d.rectangle((5, 2, 10, 2), fill=PALETA["HAIR"])  # franja
+        # Olhos azuis
+        _ponto(d, [(6, 4), (9, 4)], "EYE")
+        # Barba loira + boca
+        d.rectangle((5, 6, 10, 8), fill=PALETA["BEARD"])
+        _ponto(d, [(7, 7), (8, 7)], "MOUTH")
+        d.rectangle((4, 0, 11, 8), outline=PALETA["INK"], width=0)
+    elif direcao == "cima":
+        # De costas: só cabelo
+        _rect(d, (4, 0, 11, 8), "HAIR", None)
+        _linha(d, [(4, 8), (11, 8)], "HAIR_SH")
+    else:  # direita (perfil)
+        # Nuca (cabelo) à esquerda, rosto à direita
+        _rect(d, (4, 0, 8, 7), "HAIR", None)
+        _rect(d, (8, 2, 11, 8), "SKIN", None)
+        d.rectangle((8, 0, 11, 1), fill=PALETA["HAIR"])  # topo
+        _ponto(d, [(10, 4)], "EYE")
+        d.rectangle((8, 6, 11, 8), fill=PALETA["BEARD"])  # barba
+        _ponto(d, [(11, 7)], "MOUTH")
 
-    return imagem
+    return img
 
 
-# ==============================================================================
-# Geração
-# ==============================================================================
+# --- Geração ------------------------------------------------------------------
 
-# Dimensões padrão dos sprites (tiles) — alinhadas ao quarto.json (escala 0.5)
 _DIMENSOES_OBJETOS = {
-    "guarda_roupa": (2, 5),
-    "cama": (3, 5),
-    "mesa_cabeceira": (2, 2),
-    "mesa_pc": (5, 2),
-    "pia_banheiro": (2, 2),
-    "vaso": (2, 2),
+    "guarda_roupa": (2, 6),
+    "cama": (6, 5),
+    "mesa_pc": (6, 2),
     "chuveiro": (2, 2),
-    "ralo": (1, 1),
+    "vaso": (1, 1),
+    "pia_banheiro": (1, 1),
 }
 
 _GERADORES_OBJETOS = {
     "guarda_roupa": gerar_guarda_roupa,
     "cama": gerar_cama,
-    "mesa_cabeceira": gerar_mesa_cabeceira,
     "mesa_pc": gerar_mesa_pc,
-    "pia_banheiro": gerar_pia_banheiro,
-    "vaso": gerar_vaso,
     "chuveiro": gerar_chuveiro,
-    "ralo": gerar_ralo,
+    "vaso": gerar_vaso,
+    "pia_banheiro": gerar_pia_banheiro,
 }
 
 
 def gerar_e_salvar_tudo() -> None:
-    PASTA_TILES.mkdir(parents=True, exist_ok=True)
     PASTA_OBJETOS.mkdir(parents=True, exist_ok=True)
     PASTA_PERSONAGEM.mkdir(parents=True, exist_ok=True)
-
-    gerar_tile_chao().save(PASTA_TILES / "chao.png")
-    gerar_tile_parede().save(PASTA_TILES / "parede.png")
-    gerar_tile_porta("horizontal").save(PASTA_TILES / "porta_horizontal.png")
-    gerar_tile_porta("vertical").save(PASTA_TILES / "porta_vertical.png")
-    gerar_tile_janela("horizontal").save(PASTA_TILES / "janela_horizontal.png")
-    gerar_tile_janela("vertical").save(PASTA_TILES / "janela_vertical.png")
-    total_tiles = 6
 
     total_objetos = 0
     for tipo, gerador in _GERADORES_OBJETOS.items():
@@ -406,11 +377,11 @@ def gerar_e_salvar_tudo() -> None:
     total_personagem = 0
     for direcao in DIRECOES:
         for quadro in QUADROS:
-            caminho = PASTA_PERSONAGEM / f"{direcao}_{quadro}.png"
-            gerar_personagem(quadro, direcao).save(caminho)
+            gerar_personagem(quadro, direcao).save(
+                PASTA_PERSONAGEM / f"{direcao}_{quadro}.png"
+            )
             total_personagem += 1
 
-    print(f"Gerados {total_tiles} tiles em: {PASTA_TILES}")
     print(f"Gerados {total_objetos} objetos em: {PASTA_OBJETOS}")
     print(f"Gerados {total_personagem} quadros de personagem em: {PASTA_PERSONAGEM}")
 

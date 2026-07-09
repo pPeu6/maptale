@@ -81,3 +81,27 @@ def criar_overlay_escuro(tamanho: tuple[int, int]) -> pygame.Surface:
     overlay = pygame.Surface(tamanho, pygame.SRCALPHA)
     overlay.fill((0, 0, 0, cfg.ALPHA_OVERLAY_ESCURO))
     return overlay
+
+
+def criar_overlay_noite(tamanho: tuple[int, int]) -> pygame.Surface:
+    """Overlay opaco com o tom azulado da noite; a transparência é definida
+    por frame via `set_alpha` (ver `alpha_escuridao`)."""
+    overlay = pygame.Surface(tamanho)
+    overlay.fill(cfg.COR_NOITE)
+    return overlay
+
+
+def alpha_escuridao(fator_dia: float, luz_ligada: bool) -> int:
+    """Transparência (0-255) do overlay de escuridão, combinando o horário
+    (quanto mais tarde/noite, mais escuro) com a luz interna (serial ON/OFF).
+
+    - Dia + luz acesa: praticamente sem overlay.
+    - Noite + luz acesa: leve penumbra azulada.
+    - Luz apagada: soma-se o overlay de "luz apagada" da serial.
+    """
+    base_noite = (1.0 - max(0.0, min(1.0, fator_dia))) * cfg.ALPHA_NOITE_MAX
+    if luz_ligada:
+        escuridao = min(base_noite, float(cfg.ALPHA_NOITE_COM_LUZ))
+    else:
+        escuridao = base_noite + cfg.ALPHA_OVERLAY_ESCURO
+    return int(max(0.0, min(220.0, escuridao)))

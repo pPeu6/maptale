@@ -39,6 +39,11 @@
     "objetos": {
       "type": "array",
       "items": { "$ref": "#/definitions/objeto" }
+    },
+    "pisos": {
+      "type": "array",
+      "description": "Regioes de piso especial (ex.: banheiro), desenhadas sobre o piso padrao.",
+      "items": { "$ref": "#/definitions/piso" }
     }
   },
   "definitions": {
@@ -82,6 +87,25 @@
           "minItems": 2,
           "maxItems": 2,
           "description": "Largura e altura em metros. Default: 1 tile (escala)."
+        }
+      }
+    },
+    "piso": {
+      "type": "object",
+      "required": ["tipo", "posicao", "tamanho"],
+      "additionalProperties": false,
+      "properties": {
+        "tipo": { "type": "string", "minLength": 1 },
+        "posicao": {
+          "$ref": "#/definitions/ponto2d",
+          "description": "Canto superior-esquerdo da regiao em metros."
+        },
+        "tamanho": {
+          "type": "array",
+          "items": { "type": "number", "exclusiveMinimum": 0 },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Largura e altura em metros."
         }
       }
     }

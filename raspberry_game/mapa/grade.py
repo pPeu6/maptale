@@ -13,6 +13,9 @@ PORTA = "PORTA"
 JANELA = "JANELA"
 PREFIXO_OBJETO = "OBJETO_"
 
+# Tiles que fazem parte das linhas de parede (conectam entre si).
+CONECTIVOS = (PAREDE, PORTA, JANELA)
+
 # Quantos tiles de margem sobram ao redor do desenho.
 MARGEM_TILES = 2
 
@@ -41,6 +44,15 @@ class SpriteObjeto:
 
 
 @dataclass
+class RegiaoPiso:
+    tipo: str
+    coluna: int
+    linha: int
+    largura_tiles: int
+    altura_tiles: int
+
+
+@dataclass
 class GradeMapa:
     tiles: list[list[str]]
     largura_tiles: int
@@ -50,13 +62,19 @@ class GradeMapa:
     nome_ambiente: str
     offset_tiles: tuple[int, int] = field(default=(0, 0))
     sprites_objetos: list[SpriteObjeto] = field(default_factory=list)
-    # (coluna, linha) -> "horizontal" | "vertical" para PORTA/JANELA
-    orientacoes_abertura: dict[tuple[int, int], str] = field(default_factory=dict)
+    pisos: list[RegiaoPiso] = field(default_factory=list)
+    # (c0, r0, c1, r1) do interior (dentro das paredes externas), ou None.
+    retangulo_interior: tuple[int, int, int, int] | None = None
+    # (c0, r0, c1, r1) da faixa externa (incluindo os tiles de parede), ou None.
+    retangulo_externo: tuple[int, int, int, int] | None = None
 
     def tile_em(self, coluna: int, linha: int) -> str | None:
         if 0 <= linha < self.altura_tiles and 0 <= coluna < self.largura_tiles:
             return self.tiles[linha][coluna]
         return None
+
+    def eh_conectivo(self, coluna: int, linha: int) -> bool:
+        return self.tile_em(coluna, linha) in CONECTIVOS
 
     def bloqueia_movimento(self, coluna: int, linha: int) -> bool:
         tile = self.tile_em(coluna, linha)
@@ -113,10 +131,9 @@ def _detectar_orientacao_parede(
     tiles: list[list[str]], coluna: int, linha: int
 ) -> str:
     altura = len(tiles)
-    largura = tiles[0]
 
     def eh_parede(c: int, r: int) -> bool:
-        if r < 0 or r >= altura or c < 0 or c >= len(largura):
+        if r < 0 or r >= altura or c < 0 or c >= len(tiles[r]):
             return False
         return tiles[r][c] == PAREDE
 
@@ -131,7 +148,8 @@ def _detectar_orientacao_parede(
 def converter_json_em_grade(
     dados_mapa: dict[str, Any], tamanho_tile_px: int = 32
 ) -> GradeMapa:
-    """Converte o JSON (metros) em `GradeMapa` com tiles e sprites multi-tile."""
+    """Converte o JSON (metros) em `GradeMapa` com tiles, sprites multi-tile
+    e regioes de piso."""
     escala = float(dados_mapa["escala_metros_por_tile"])
     pontos_m = _pontos_em_metros(dados_mapa)
 
@@ -153,7 +171,7 @@ def converter_json_em_grade(
 
     tiles = [[CHAO for _ in range(largura_tiles)] for _ in range(altura_tiles)]
     sprites: list[SpriteObjeto] = []
-    orientacoes: dict[tuple[int, int], str] = {}
+    pisos: list[RegiaoPiso] = []
 
     def para_grade(ponto_m: tuple[float, float]) -> tuple[int, int]:
         x_m, y_m = ponto_m
@@ -178,17 +196,46 @@ def converter_json_em_grade(
         inicio = -(quantidade_tiles // 2)
         for i in range(inicio, inicio + quantidade_tiles):
             if orientacao == "horizontal":
-                c, l = coluna + i, linha
+                marcar(coluna + i, linha, tile)
             else:
-                c, l = coluna, linha + i
-            marcar(c, l, tile)
-            orientacoes[(c, l)] = orientacao
+                marcar(coluna, linha + i, tile)
 
     for porta in dados_mapa["portas"]:
         marcar_abertura(tuple(porta["posicao"]), float(porta["largura"]), PORTA)
 
     for janela in dados_mapa["janelas"]:
         marcar_abertura(tuple(janela["posicao"]), float(janela["largura"]), JANELA)
+
+    # Interior (dentro das paredes externas): a partir dos extremos de PAREDE.
+    paredes_tiles = [
+        (c, r)
+        for r in range(altura_tiles)
+        for c in range(largura_tiles)
+        if tiles[r][c] == PAREDE
+    ]
+    retangulo_interior: tuple[int, int, int, int] | None = None
+    retangulo_externo: tuple[int, int, int, int] | None = None
+    if paredes_tiles:
+        cmin = min(c for c, _ in paredes_tiles)
+        cmax = max(c for c, _ in paredes_tiles)
+        rmin = min(r for _, r in paredes_tiles)
+        rmax = max(r for _, r in paredes_tiles)
+        retangulo_externo = (cmin, rmin, cmax, rmax)
+        retangulo_interior = (cmin + 1, rmin + 1, cmax - 1, rmax - 1)
+
+    for piso in dados_mapa.get("pisos", []):
+        x_m, y_m = piso["posicao"]
+        w_m, h_m = float(piso["tamanho"][0]), float(piso["tamanho"][1])
+        c0, l0 = para_grade((x_m, y_m))
+        pisos.append(
+            RegiaoPiso(
+                tipo=piso["tipo"],
+                coluna=c0,
+                linha=l0,
+                largura_tiles=max(1, round(w_m / escala)),
+                altura_tiles=max(1, round(h_m / escala)),
+            )
+        )
 
     for objeto in dados_mapa["objetos"]:
         tipo = objeto["tipo"]
@@ -227,5 +274,7 @@ def converter_json_em_grade(
         nome_ambiente=dados_mapa["nome_ambiente"],
         offset_tiles=(offset_x, offset_y),
         sprites_objetos=sprites,
-        orientacoes_abertura=orientacoes,
+        pisos=pisos,
+        retangulo_interior=retangulo_interior,
+        retangulo_externo=retangulo_externo,
     )

@@ -17,11 +17,12 @@ if str(_RAIZ) not in sys.path:
 
 import pygame
 
-from jogo import configuracoes as cfg
+from jogo import ambiente, configuracoes as cfg
 from jogo import tiles
 from mapa.grade import converter_json_em_grade
 
 ESCALA_EXTRA = 2  # além do TILE_SIZE_PX, para o preview ficar legível
+FATOR_DIA_PREVIEW = 0.9  # dia claro, para mostrar o feixe de sol
 SAIDA = Path(__file__).resolve().parent / "preview_mapa.png"
 
 
@@ -32,16 +33,25 @@ def main() -> None:
     grade = converter_json_em_grade(dados, tamanho_tile)
 
     pygame.init()
+    pygame.font.init()
     pygame.display.set_mode((1, 1))  # necessário para convert()
 
-    tileset = tiles.carregar_tileset(tamanho_tile)
     sprites = tiles.carregar_sprites_objetos(tamanho_tile)
 
     superficie = pygame.Surface(
         (grade.largura_tiles * tamanho_tile, grade.altura_tiles * tamanho_tile)
     )
-    superficie.fill((20, 20, 22))
-    tiles.desenhar_grade(superficie, grade, tileset, (0, 0), sprites)
+    superficie.fill(cfg.COR_FUNDO)
+    tiles.desenhar_grade(superficie, grade, (0, 0), sprites)
+    tiles.desenhar_feixes_sol(superficie, grade, (0, 0), FATOR_DIA_PREVIEW)
+
+    estado = ambiente.EstadoAmbiente()
+    thread = ambiente.ThreadClima(estado)
+    temp, codigo = thread._buscar_clima()
+    if temp is not None:
+        estado.temperatura = temp
+        estado.codigo_clima = codigo
+    ambiente.desenhar_hud(superficie, estado)
 
     pygame.image.save(superficie, str(SAIDA))
     print(f"Preview do mapa salvo em: {SAIDA}")

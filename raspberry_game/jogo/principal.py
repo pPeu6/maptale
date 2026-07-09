@@ -21,9 +21,14 @@ if str(_RAIZ_PROJETO) not in sys.path:
 
 import pygame  # noqa: E402
 
-from jogo import configuracoes as cfg  # noqa: E402
+from jogo import ambiente, configuracoes as cfg  # noqa: E402
 from jogo import entrada, tiles  # noqa: E402
-from jogo.iluminacao import EstadoIluminacao, ThreadLeituraSerial, criar_overlay_escuro  # noqa: E402
+from jogo.iluminacao import (  # noqa: E402
+    EstadoIluminacao,
+    ThreadLeituraSerial,
+    alpha_escuridao,
+    criar_overlay_noite,
+)
 from jogo.personagem import Personagem  # noqa: E402
 from mapa.grade import GradeMapa, converter_json_em_grade  # noqa: E402
 
@@ -96,13 +101,17 @@ def main() -> None:
     relogio = pygame.time.Clock()
 
     joystick = entrada.inicializar_joystick()
-    tileset = tiles.carregar_tileset(cfg.TILE_SIZE_PX)
     sprites_objetos = tiles.carregar_sprites_objetos(cfg.TILE_SIZE_PX)
-    overlay_escuro = criar_overlay_escuro((largura_tela, altura_tela))
+    overlay_noite = criar_overlay_noite((largura_tela, altura_tela))
+    fonte_hud = pygame.font.SysFont(None, cfg.TAMANHO_FONTE_HUD)
 
     estado_iluminacao = EstadoIluminacao()
     thread_serial = ThreadLeituraSerial(estado_iluminacao)
     thread_serial.start()
+
+    estado_ambiente = ambiente.EstadoAmbiente()
+    thread_clima = ambiente.ThreadClima(estado_ambiente)
+    thread_clima.start()
 
     personagem = Personagem(
         posicao_tiles=_spawn_livre(grade),
@@ -125,16 +134,25 @@ def main() -> None:
 
             camera_offset = _calcular_camera(personagem, grade, largura_tela, altura_tela)
 
-            tela.fill((0, 0, 0))
-            tiles.desenhar_grade(tela, grade, tileset, camera_offset, sprites_objetos)
+            tela.fill(cfg.COR_FUNDO)
+            tiles.desenhar_grade(tela, grade, camera_offset, sprites_objetos)
             personagem.desenhar(tela, camera_offset)
 
-            if not estado_iluminacao.ligado:
-                tela.blit(overlay_escuro, (0, 0))
+            # Luz natural: escuridão combinada (horário + luz interna) e, por
+            # cima, o feixe de sol saindo das janelas (mais fraco à tardinha).
+            luz_dia = ambiente.fator_dia()
+            alpha = alpha_escuridao(luz_dia, estado_iluminacao.ligado)
+            if alpha > 0:
+                overlay_noite.set_alpha(alpha)
+                tela.blit(overlay_noite, (0, 0))
+            tiles.desenhar_feixes_sol(tela, grade, camera_offset, luz_dia)
+
+            ambiente.desenhar_hud(tela, estado_ambiente, fonte_hud)
 
             pygame.display.flip()
     finally:
         thread_serial.parar()
+        thread_clima.parar()
         pygame.quit()
 
 
