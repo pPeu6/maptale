@@ -13,8 +13,7 @@ PORTA = "PORTA"
 JANELA = "JANELA"
 PREFIXO_OBJETO = "OBJETO_"
 
-# Quantos tiles de margem sobram ao redor do desenho, para o personagem não
-# nascer colado na borda da grade.
+# Quantos tiles de margem sobram ao redor do desenho.
 MARGEM_TILES = 2
 
 
@@ -26,6 +25,21 @@ def eh_objeto(tile: str) -> bool:
     return tile.startswith(PREFIXO_OBJETO)
 
 
+def tipo_objeto(tile: str) -> str:
+    return tile[len(PREFIXO_OBJETO) :] if eh_objeto(tile) else tile
+
+
+@dataclass
+class SpriteObjeto:
+    """Sprite multi-tile: âncora no canto superior-esquerdo da grade."""
+
+    tipo: str
+    coluna: int
+    linha: int
+    largura_tiles: int
+    altura_tiles: int
+
+
 @dataclass
 class GradeMapa:
     tiles: list[list[str]]
@@ -35,6 +49,9 @@ class GradeMapa:
     escala_metros_por_tile: float
     nome_ambiente: str
     offset_tiles: tuple[int, int] = field(default=(0, 0))
+    sprites_objetos: list[SpriteObjeto] = field(default_factory=list)
+    # (coluna, linha) -> "horizontal" | "vertical" para PORTA/JANELA
+    orientacoes_abertura: dict[tuple[int, int], str] = field(default_factory=dict)
 
     def tile_em(self, coluna: int, linha: int) -> str | None:
         if 0 <= linha < self.altura_tiles and 0 <= coluna < self.largura_tiles:
@@ -44,13 +61,12 @@ class GradeMapa:
     def bloqueia_movimento(self, coluna: int, linha: int) -> bool:
         tile = self.tile_em(coluna, linha)
         if tile is None:
-            return True  # fora da grade é tratado como parede
+            return True
         return tile == PAREDE or tile == JANELA or eh_objeto(tile)
 
 
 def linha_bresenham(x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
-    """Rasteriza o segmento (x0,y0)-(x1,y1) em tiles inteiros usando o
-    algoritmo de Bresenham (funciona para qualquer inclinação/octante)."""
+    """Rasteriza o segmento (x0,y0)-(x1,y1) em tiles inteiros (Bresenham)."""
     pontos: list[tuple[int, int]] = []
 
     dx = abs(x1 - x0)
@@ -85,15 +101,17 @@ def _pontos_em_metros(dados_mapa: dict[str, Any]) -> list[tuple[float, float]]:
     for janela in dados_mapa["janelas"]:
         pontos.append(tuple(janela["posicao"]))
     for objeto in dados_mapa["objetos"]:
-        pontos.append(tuple(objeto["posicao"]))
+        x, y = objeto["posicao"]
+        pontos.append((x, y))
+        tamanho = objeto.get("tamanho")
+        if tamanho:
+            pontos.append((x + float(tamanho[0]), y + float(tamanho[1])))
     return pontos
 
 
 def _detectar_orientacao_parede(
     tiles: list[list[str]], coluna: int, linha: int
 ) -> str:
-    """Olha os tiles vizinhos já rasterizados como PAREDE para decidir se a
-    abertura (porta/janela) deve se estender na horizontal ou na vertical."""
     altura = len(tiles)
     largura = tiles[0]
 
@@ -107,20 +125,13 @@ def _detectar_orientacao_parede(
 
     if paredes_verticais and not paredes_horizontais:
         return "vertical"
-    return "horizontal"  # padrão quando ambíguo/sem paredes próximas
+    return "horizontal"
 
 
 def converter_json_em_grade(
     dados_mapa: dict[str, Any], tamanho_tile_px: int = 32
 ) -> GradeMapa:
-    """Converte o JSON compartilhado (coordenadas em metros) em uma
-    `GradeMapa` de tiles (`PAREDE`, `CHAO`, `PORTA`, `JANELA`,
-    `OBJETO_<tipo>`).
-
-    `tamanho_tile_px` não afeta os cálculos de posição (que dependem apenas
-    de `escala_metros_por_tile`); ele é apenas propagado para a `GradeMapa`
-    para que o motor Pygame saiba em qual resolução desenhar cada tile.
-    """
+    """Converte o JSON (metros) em `GradeMapa` com tiles e sprites multi-tile."""
     escala = float(dados_mapa["escala_metros_por_tile"])
     pontos_m = _pontos_em_metros(dados_mapa)
 
@@ -141,6 +152,8 @@ def converter_json_em_grade(
     altura_tiles = (max_y_tile - min_y_tile) + 2 * MARGEM_TILES + 1
 
     tiles = [[CHAO for _ in range(largura_tiles)] for _ in range(altura_tiles)]
+    sprites: list[SpriteObjeto] = []
+    orientacoes: dict[tuple[int, int], str] = {}
 
     def para_grade(ponto_m: tuple[float, float]) -> tuple[int, int]:
         x_m, y_m = ponto_m
@@ -165,9 +178,11 @@ def converter_json_em_grade(
         inicio = -(quantidade_tiles // 2)
         for i in range(inicio, inicio + quantidade_tiles):
             if orientacao == "horizontal":
-                marcar(coluna + i, linha, tile)
+                c, l = coluna + i, linha
             else:
-                marcar(coluna, linha + i, tile)
+                c, l = coluna, linha + i
+            marcar(c, l, tile)
+            orientacoes[(c, l)] = orientacao
 
     for porta in dados_mapa["portas"]:
         marcar_abertura(tuple(porta["posicao"]), float(porta["largura"]), PORTA)
@@ -176,8 +191,32 @@ def converter_json_em_grade(
         marcar_abertura(tuple(janela["posicao"]), float(janela["largura"]), JANELA)
 
     for objeto in dados_mapa["objetos"]:
-        coluna, linha = para_grade(tuple(objeto["posicao"]))
-        marcar(coluna, linha, nome_tile_objeto(objeto["tipo"]))
+        tipo = objeto["tipo"]
+        x_m, y_m = objeto["posicao"]
+        tamanho = objeto.get("tamanho")
+        if tamanho:
+            w_m, h_m = float(tamanho[0]), float(tamanho[1])
+        else:
+            w_m = h_m = escala
+
+        c0, l0 = para_grade((x_m, y_m))
+        w_tiles = max(1, round(w_m / escala))
+        h_tiles = max(1, round(h_m / escala))
+
+        nome = nome_tile_objeto(tipo)
+        for dy in range(h_tiles):
+            for dx in range(w_tiles):
+                marcar(c0 + dx, l0 + dy, nome)
+
+        sprites.append(
+            SpriteObjeto(
+                tipo=tipo,
+                coluna=c0,
+                linha=l0,
+                largura_tiles=w_tiles,
+                altura_tiles=h_tiles,
+            )
+        )
 
     return GradeMapa(
         tiles=tiles,
@@ -187,4 +226,6 @@ def converter_json_em_grade(
         escala_metros_por_tile=escala,
         nome_ambiente=dados_mapa["nome_ambiente"],
         offset_tiles=(offset_x, offset_y),
+        sprites_objetos=sprites,
+        orientacoes_abertura=orientacoes,
     )

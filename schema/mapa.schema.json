@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://maptale.local/schema/mapa.schema.json",
   "title": "MapaAmbiente",
-  "description": "Contrato de dados compartilhado entre o app mobile (Flutter/AR) e o jogo do Raspberry Pi (Python/Pygame). Coordenadas x,y sao expressas em metros, no plano top-down, relativas ao primeiro ponto marcado durante o escaneamento.",
+  "description": "Formato do mapa do jogo Maptale (Raspberry Pi / Pygame). Coordenadas x,y em metros no plano top-down.",
   "type": "object",
   "required": [
     "nome_ambiente",
@@ -17,12 +17,12 @@
     "nome_ambiente": {
       "type": "string",
       "minLength": 1,
-      "description": "Nome/identificador do ambiente escaneado, usado tambem como nome do arquivo salvo no servidor."
+      "description": "Identificador do ambiente / nome do arquivo JSON."
     },
     "escala_metros_por_tile": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "Quantos metros do mundo real equivalem a um tile da grade do jogo."
+      "description": "Metros do mundo real por tile da grade."
     },
     "paredes": {
       "type": "array",
@@ -72,26 +72,36 @@
       "additionalProperties": false,
       "properties": {
         "tipo": { "type": "string", "minLength": 1 },
-        "posicao": { "$ref": "#/definitions/ponto2d" }
+        "posicao": {
+          "$ref": "#/definitions/ponto2d",
+          "description": "Canto superior-esquerdo do objeto em metros."
+        },
+        "tamanho": {
+          "type": "array",
+          "items": { "type": "number", "exclusiveMinimum": 0 },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Largura e altura em metros. Default: 1 tile (escala)."
+        }
       }
     }
   },
   "examples": [
     {
-      "nome_ambiente": "sala_teste",
-      "escala_metros_por_tile": 0.1,
+      "nome_ambiente": "quarto",
+      "escala_metros_por_tile": 0.5,
       "paredes": [
-        { "inicio": [0.0, 0.0], "fim": [4.0, 0.0] },
-        { "inicio": [4.0, 0.0], "fim": [4.0, 3.0] }
+        { "inicio": [0.0, 0.0], "fim": [6.0, 0.0] },
+        { "inicio": [6.0, 0.0], "fim": [6.0, 4.0] }
       ],
       "portas": [
-        { "posicao": [2.0, 0.0], "largura": 0.8 }
+        { "posicao": [0.0, 1.0], "largura": 0.9 }
       ],
       "janelas": [
-        { "posicao": [4.0, 1.5], "largura": 1.2 }
+        { "posicao": [3.0, 4.0], "largura": 1.2 }
       ],
       "objetos": [
-        { "tipo": "sofa", "posicao": [1.0, 1.0] }
+        { "tipo": "cama", "posicao": [2.0, 1.0], "tamanho": [1.5, 2.0] }
       ]
     }
   ]

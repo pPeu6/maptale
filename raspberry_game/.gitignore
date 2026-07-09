@@ -5,4 +5,6 @@ venv/
 
 # Assets finais (PNGs) chegam depois; mantemos apenas os .gitkeep até lá
 assets/tiles/*.png
+assets/tiles/objetos/*.png
 assets/personagem/*.png
+assets/preview_*.png

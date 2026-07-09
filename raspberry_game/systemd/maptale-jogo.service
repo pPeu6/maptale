@@ -1,5 +1,5 @@
 [Unit]
-Description=Maptale - Jogo Raspberry Pi (Pygame + servidor Flask de upload)
+Description=Maptale - Jogo Raspberry Pi (Pygame, mapa local)
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=60

@@ -1,71 +1,105 @@
-"""Carregamento do tileset e renderização da grade.
+"""Carregamento do tileset, sprites de móveis e renderização da grade.
 
-Prioriza simplicidade/performance (Raspberry Pi 3): sem parallax, sem
-iluminação por tile, apenas blits diretos e cull dos tiles fora da tela.
+Prioriza simplicidade/performance (Raspberry Pi 3): blits diretos e cull
+dos tiles fora da tela.
 """
 
 from __future__ import annotations
 
 import pygame
 
-from mapa.grade import CHAO, GradeMapa, JANELA, PAREDE, PORTA, eh_objeto
+from mapa.grade import CHAO, GradeMapa, JANELA, PAREDE, PORTA, SpriteObjeto, eh_objeto
 from . import configuracoes as cfg
 
 _ARQUIVOS_TILE = {
     CHAO: "chao.png",
     PAREDE: "parede.png",
-    # A grade ainda não distingue orientação de porta/janela (ver
-    # `mapa/grade.py`), então usamos a variante horizontal como padrão.
-    # As variantes verticais (geradas por `assets/gerador_tiles.py`) ficam
-    # disponíveis em disco para quando essa distinção for adicionada.
-    PORTA: "porta_horizontal.png",
-    JANELA: "janela_horizontal.png",
+    f"{PORTA}_horizontal": "porta_horizontal.png",
+    f"{PORTA}_vertical": "porta_vertical.png",
+    f"{JANELA}_horizontal": "janela_horizontal.png",
+    f"{JANELA}_vertical": "janela_vertical.png",
 }
 
-_fonte_objeto: pygame.font.Font | None = None
 
-
-def _superficie_placeholder(cor: tuple[int, int, int], tamanho: int) -> pygame.Surface:
-    superficie = pygame.Surface((tamanho, tamanho))
+def _superficie_placeholder(cor: tuple[int, int, int], tamanho: tuple[int, int]) -> pygame.Surface:
+    superficie = pygame.Surface(tamanho)
     superficie.fill(cor)
     pygame.draw.rect(superficie, (0, 0, 0), superficie.get_rect(), width=1)
     return superficie
 
 
 def carregar_tileset(tamanho_tile_px: int = cfg.TILE_SIZE_PX) -> dict[str, pygame.Surface]:
-    """Carrega os PNGs do tileset (chao/parede/porta/janela). Se algum
-    arquivo não existir ainda, usa um retângulo colorido como placeholder,
-    para o jogo continuar funcionável antes dos assets finais chegarem."""
     tileset: dict[str, pygame.Surface] = {}
+    alvo = (tamanho_tile_px, tamanho_tile_px)
 
-    for tipo_tile, nome_arquivo in _ARQUIVOS_TILE.items():
-        caminho = cfg.PASTA_TILES / nome_arquivo
+    # Chão / parede
+    for tipo in (CHAO, PAREDE):
+        caminho = cfg.PASTA_TILES / f"{tipo.lower()}.png"
         if caminho.exists():
             imagem = pygame.image.load(str(caminho)).convert()
-            if imagem.get_size() != (tamanho_tile_px, tamanho_tile_px):
-                imagem = pygame.transform.scale(imagem, (tamanho_tile_px, tamanho_tile_px))
-            tileset[tipo_tile] = imagem
+            if imagem.get_size() != alvo:
+                imagem = pygame.transform.scale(imagem, alvo)
+            tileset[tipo] = imagem
         else:
-            cor = cfg.CORES_PLACEHOLDER_TILES[tipo_tile]
-            tileset[tipo_tile] = _superficie_placeholder(cor, tamanho_tile_px)
+            tileset[tipo] = _superficie_placeholder(cfg.CORES_PLACEHOLDER_TILES[tipo], alvo)
+
+    # Portas / janelas (horizontal + vertical)
+    for tipo, nome_base in ((PORTA, "porta"), (JANELA, "janela")):
+        for orientacao in ("horizontal", "vertical"):
+            chave = f"{tipo}_{orientacao}"
+            caminho = cfg.PASTA_TILES / f"{nome_base}_{orientacao}.png"
+            if caminho.exists():
+                imagem = pygame.image.load(str(caminho)).convert()
+                if imagem.get_size() != alvo:
+                    imagem = pygame.transform.scale(imagem, alvo)
+                tileset[chave] = imagem
+            else:
+                tileset[chave] = _superficie_placeholder(cfg.CORES_PLACEHOLDER_TILES[tipo], alvo)
 
     return tileset
 
 
-def _obter_fonte() -> pygame.font.Font:
-    global _fonte_objeto
-    if _fonte_objeto is None:
-        _fonte_objeto = pygame.font.SysFont(None, 16)
-    return _fonte_objeto
+def carregar_sprites_objetos(tamanho_tile_px: int = cfg.TILE_SIZE_PX) -> dict[str, pygame.Surface]:
+    """Carrega PNGs de `assets/tiles/objetos/<tipo>.png`."""
+    sprites: dict[str, pygame.Surface] = {}
+    pasta = cfg.PASTA_OBJETOS
+    if not pasta.exists():
+        return sprites
+
+    fator = tamanho_tile_px / cfg.TAMANHO_TILE_LOGICO_PX
+    for caminho in sorted(pasta.glob("*.png")):
+        imagem = pygame.image.load(str(caminho)).convert_alpha()
+        alvo = (round(imagem.get_width() * fator), round(imagem.get_height() * fator))
+        if imagem.get_size() != alvo:
+            imagem = pygame.transform.scale(imagem, alvo)
+        sprites[caminho.stem] = imagem
+    return sprites
 
 
-def _superficie_objeto(tipo: str, tamanho_tile_px: int) -> pygame.Surface:
-    superficie = _superficie_placeholder(cfg.COR_PLACEHOLDER_OBJETO, tamanho_tile_px)
-    letra = tipo[len("OBJETO_"):][:1].upper() if tipo.startswith("OBJETO_") else "?"
-    texto = _obter_fonte().render(letra, True, (30, 30, 30))
-    retangulo_texto = texto.get_rect(center=(tamanho_tile_px // 2, tamanho_tile_px // 2))
-    superficie.blit(texto, retangulo_texto)
-    return superficie
+def _sprite_para(
+    sprite_info: SpriteObjeto,
+    sprites: dict[str, pygame.Surface],
+    tamanho_tile_px: int,
+) -> pygame.Surface:
+    existente = sprites.get(sprite_info.tipo)
+    if existente is not None:
+        return existente
+    w = sprite_info.largura_tiles * tamanho_tile_px
+    h = sprite_info.altura_tiles * tamanho_tile_px
+    return _superficie_placeholder(cfg.COR_PLACEHOLDER_OBJETO, (w, h))
+
+
+def _superficie_tile(
+    tile: str,
+    coluna: int,
+    linha: int,
+    grade: GradeMapa,
+    tileset: dict[str, pygame.Surface],
+) -> pygame.Surface:
+    if tile in (PORTA, JANELA):
+        orientacao = grade.orientacoes_abertura.get((coluna, linha), "horizontal")
+        return tileset.get(f"{tile}_{orientacao}", tileset[f"{tile}_horizontal"])
+    return tileset.get(tile, tileset[CHAO])
 
 
 def desenhar_grade(
@@ -73,30 +107,35 @@ def desenhar_grade(
     grade: GradeMapa,
     tileset: dict[str, pygame.Surface],
     camera_offset_px: tuple[int, int],
+    sprites_objetos: dict[str, pygame.Surface] | None = None,
 ) -> None:
-    """Desenha apenas os tiles visíveis na tela (viewport culling)."""
+    """Desenha chão/paredes/aberturas e, por cima, sprites multi-tile."""
     tamanho = grade.tamanho_tile_px
     offset_x, offset_y = camera_offset_px
     largura_tela, altura_tela = tela.get_size()
+    sprites_objetos = sprites_objetos or {}
 
     coluna_inicial = max(0, offset_x // tamanho)
     linha_inicial = max(0, offset_y // tamanho)
     coluna_final = min(grade.largura_tiles, (offset_x + largura_tela) // tamanho + 2)
     linha_final = min(grade.altura_tiles, (offset_y + altura_tela) // tamanho + 2)
 
-    cache_objetos: dict[str, pygame.Surface] = {}
-
     for linha in range(linha_inicial, linha_final):
         for coluna in range(coluna_inicial, coluna_final):
             tile = grade.tiles[linha][coluna]
+            px = coluna * tamanho - offset_x
+            py = linha * tamanho - offset_y
             if eh_objeto(tile):
-                superficie = cache_objetos.get(tile)
-                if superficie is None:
-                    superficie = _superficie_objeto(tile, tamanho)
-                    cache_objetos[tile] = superficie
-                # Desenha o chão embaixo do objeto para não deixar buraco.
-                tela.blit(tileset[CHAO], (coluna * tamanho - offset_x, linha * tamanho - offset_y))
+                tela.blit(tileset[CHAO], (px, py))
             else:
-                superficie = tileset[tile]
+                tela.blit(_superficie_tile(tile, coluna, linha, grade, tileset), (px, py))
 
-            tela.blit(superficie, (coluna * tamanho - offset_x, linha * tamanho - offset_y))
+    for info in grade.sprites_objetos:
+        superficie = _sprite_para(info, sprites_objetos, tamanho)
+        px = info.coluna * tamanho - offset_x
+        py = info.linha * tamanho - offset_y
+        if px + superficie.get_width() < 0 or py + superficie.get_height() < 0:
+            continue
+        if px > largura_tela or py > altura_tela:
+            continue
+        tela.blit(superficie, (px, py))

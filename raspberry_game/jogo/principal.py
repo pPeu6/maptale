@@ -1,9 +1,9 @@
 """Ponto de entrada do jogo.
 
-Sobe o servidor Flask (`servidor.py`) em uma thread daemon e roda o loop
-principal do Pygame na thread principal (obrigatório para o display).
-Pode ser executado tanto como script direto (`python3 jogo/principal.py`,
-usado pelo systemd) quanto como módulo (`python3 -m jogo.principal`).
+Carrega o mapa local fixo (`mapas/quarto.json`) e roda o loop principal do
+Pygame em tela cheia. Pode ser executado tanto como script direto
+(`python3 jogo/principal.py`, usado pelo systemd) quanto como módulo
+(`python3 -m jogo.principal`).
 """
 
 from __future__ import annotations
@@ -11,9 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-import threading
 from pathlib import Path
-from typing import Optional
 
 # Garante que a raiz do projeto (raspberry_game/) esteja no sys.path,
 # independentemente de como o script foi invocado.
@@ -28,7 +26,6 @@ from jogo import entrada, tiles  # noqa: E402
 from jogo.iluminacao import EstadoIluminacao, ThreadLeituraSerial, criar_overlay_escuro  # noqa: E402
 from jogo.personagem import Personagem  # noqa: E402
 from mapa.grade import GradeMapa, converter_json_em_grade  # noqa: E402
-from servidor import criar_app  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -36,119 +33,79 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class EstadoMapaCompartilhado:
-    """Guarda a grade atual do jogo de forma thread-safe: o servidor Flask
-    escreve (quando um novo mapa chega), o loop do jogo lê a cada frame."""
-
-    def __init__(self, grade_inicial: GradeMapa):
-        self._lock = threading.Lock()
-        self._grade = grade_inicial
-
-    @property
-    def grade(self) -> GradeMapa:
-        with self._lock:
-            return self._grade
-
-    def substituir(self, nova_grade: GradeMapa) -> None:
-        with self._lock:
-            self._grade = nova_grade
+def _carregar_mapa_padrao() -> GradeMapa:
+    caminho = cfg.MAPA_PADRAO
+    if not caminho.exists():
+        raise FileNotFoundError(
+            f"Mapa padrão não encontrado: {caminho}. "
+            "Esperado mapas/quarto.json no projeto."
+        )
+    dados = json.loads(caminho.read_text(encoding="utf-8"))
+    return converter_json_em_grade(dados, cfg.TILE_SIZE_PX)
 
 
-def _grade_vazia_padrao() -> GradeMapa:
-    """Grade mínima usada enquanto nenhum mapa foi enviado ainda."""
-    dados_minimos = {
-        "nome_ambiente": "aguardando_mapa",
-        "escala_metros_por_tile": 0.1,
-        "paredes": [],
-        "portas": [],
-        "janelas": [],
-        "objetos": [],
-    }
-    return converter_json_em_grade(dados_minimos, cfg.TILE_SIZE_PX)
-
-
-def _carregar_ultimo_mapa_salvo() -> Optional[GradeMapa]:
-    if not cfg.PASTA_MAPAS.exists():
-        return None
-    arquivos = sorted(
-        cfg.PASTA_MAPAS.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
-    )
-    if not arquivos:
-        return None
-    try:
-        dados = json.loads(arquivos[0].read_text(encoding="utf-8"))
-        return converter_json_em_grade(dados, cfg.TILE_SIZE_PX)
-    except Exception:
-        logger.exception("Falha ao carregar mapa salvo '%s'", arquivos[0])
-        return None
-
-
-def _iniciar_servidor_em_thread(estado_mapa: EstadoMapaCompartilhado) -> None:
-    def ao_receber_mapa(dados: dict) -> None:
+def _abrir_tela() -> pygame.Surface:
+    if cfg.TELA_CHEIA:
         try:
-            nova_grade = converter_json_em_grade(dados, cfg.TILE_SIZE_PX)
-        except Exception:
-            logger.exception("Falha ao converter o novo mapa recebido")
-            return
-        estado_mapa.substituir(nova_grade)
-        logger.info("Mapa recarregado sem reiniciar: %s", nova_grade.nome_ambiente)
-
-    app = criar_app(cfg.PASTA_MAPAS, ao_receber_mapa=ao_receber_mapa)
-
-    thread = threading.Thread(
-        target=lambda: app.run(
-            host=cfg.HOST_SERVIDOR,
-            port=cfg.PORTA_SERVIDOR,
-            use_reloader=False,
-            threaded=True,
-        ),
-        name="ThreadServidorFlask",
-        daemon=True,
-    )
-    thread.start()
-    logger.info(
-        "Servidor Flask escutando em http://%s:%s/upload_map",
-        cfg.HOST_SERVIDOR,
-        cfg.PORTA_SERVIDOR,
-    )
+            return pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        except pygame.error:
+            logger.warning("Fullscreen falhou; usando janela %sx%s", cfg.LARGURA_TELA, cfg.ALTURA_TELA)
+    return pygame.display.set_mode((cfg.LARGURA_TELA, cfg.ALTURA_TELA))
 
 
-def _calcular_camera(personagem: Personagem, grade: GradeMapa) -> tuple[int, int]:
-    """Centraliza a câmera no personagem, sem deixar a tela mostrar área
-    fora dos limites da grade."""
+def _calcular_camera(
+    personagem: Personagem, grade: GradeMapa, largura_tela: int, altura_tela: int
+) -> tuple[int, int]:
+    """Se o mapa cabe na tela, centraliza. Caso contrário, segue o
+    personagem com clamp nas bordas da grade."""
     tamanho = grade.tamanho_tile_px
-    alvo_x = personagem.x * tamanho - cfg.LARGURA_TELA / 2
-    alvo_y = personagem.y * tamanho - cfg.ALTURA_TELA / 2
+    mapa_w = grade.largura_tiles * tamanho
+    mapa_h = grade.altura_tiles * tamanho
 
-    limite_x = max(0, grade.largura_tiles * tamanho - cfg.LARGURA_TELA)
-    limite_y = max(0, grade.altura_tiles * tamanho - cfg.ALTURA_TELA)
+    if mapa_w <= largura_tela and mapa_h <= altura_tela:
+        # Offset negativo = mapa centralizado (bordas pretas ao redor).
+        return -((largura_tela - mapa_w) // 2), -((altura_tela - mapa_h) // 2)
 
-    offset_x = min(max(0, alvo_x), limite_x)
-    offset_y = min(max(0, alvo_y), limite_y)
-    return int(offset_x), int(offset_y)
+    alvo_x = personagem.x * tamanho - largura_tela / 2
+    alvo_y = personagem.y * tamanho - altura_tela / 2
+    limite_x = max(0, mapa_w - largura_tela)
+    limite_y = max(0, mapa_h - altura_tela)
+    return int(min(max(0, alvo_x), limite_x)), int(min(max(0, alvo_y), limite_y))
+
+
+def _spawn_livre(grade: GradeMapa) -> tuple[float, float]:
+    """Primeiro tile de chão livre perto do centro (evita nascer em móvel)."""
+    cx, cy = grade.largura_tiles // 2, grade.altura_tiles // 2
+    for raio in range(0, max(grade.largura_tiles, grade.altura_tiles)):
+        for dy in range(-raio, raio + 1):
+            for dx in range(-raio, raio + 1):
+                c, l = cx + dx, cy + dy
+                if grade.tile_em(c, l) == "CHAO":
+                    return float(c) + 0.5, float(l) + 0.5
+    return float(cx), float(cy)
 
 
 def main() -> None:
-    grade_inicial = _carregar_ultimo_mapa_salvo() or _grade_vazia_padrao()
-    estado_mapa = EstadoMapaCompartilhado(grade_inicial)
-    _iniciar_servidor_em_thread(estado_mapa)
+    grade = _carregar_mapa_padrao()
+    logger.info("Mapa carregado: %s (%sx%s tiles)", grade.nome_ambiente, grade.largura_tiles, grade.altura_tiles)
 
     pygame.init()
-    tela = pygame.display.set_mode((cfg.LARGURA_TELA, cfg.ALTURA_TELA))
+    tela = _abrir_tela()
+    largura_tela, altura_tela = tela.get_size()
     pygame.display.set_caption("Maptale")
     relogio = pygame.time.Clock()
 
     joystick = entrada.inicializar_joystick()
     tileset = tiles.carregar_tileset(cfg.TILE_SIZE_PX)
-    overlay_escuro = criar_overlay_escuro((cfg.LARGURA_TELA, cfg.ALTURA_TELA))
+    sprites_objetos = tiles.carregar_sprites_objetos(cfg.TILE_SIZE_PX)
+    overlay_escuro = criar_overlay_escuro((largura_tela, altura_tela))
 
     estado_iluminacao = EstadoIluminacao()
     thread_serial = ThreadLeituraSerial(estado_iluminacao)
     thread_serial.start()
 
-    grade_atual = estado_mapa.grade
     personagem = Personagem(
-        posicao_tiles=(grade_atual.largura_tiles / 2, grade_atual.altura_tiles / 2),
+        posicao_tiles=_spawn_livre(grade),
         tamanho_tile_px=cfg.TILE_SIZE_PX,
     )
 
@@ -163,15 +120,13 @@ def main() -> None:
                 elif evento.type == pygame.KEYDOWN and evento.key == pygame.K_ESCAPE:
                     rodando = False
 
-            grade_atual = estado_mapa.grade
-
             vetor_x, vetor_y = entrada.ler_vetor_movimento(joystick)
-            personagem.mover(vetor_x, vetor_y, dt, grade_atual)
+            personagem.mover(vetor_x, vetor_y, dt, grade)
 
-            camera_offset = _calcular_camera(personagem, grade_atual)
+            camera_offset = _calcular_camera(personagem, grade, largura_tela, altura_tela)
 
             tela.fill((0, 0, 0))
-            tiles.desenhar_grade(tela, grade_atual, tileset, camera_offset)
+            tiles.desenhar_grade(tela, grade, tileset, camera_offset, sprites_objetos)
             personagem.desenhar(tela, camera_offset)
 
             if not estado_iluminacao.ligado:

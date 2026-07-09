@@ -1,8 +1,7 @@
-"""Preview visual rápido (Pygame) de todos os tiles e quadros de personagem
-gerados por `gerador_tiles.py`, para conferir a arte sem abrir cada PNG.
+"""Preview visual rápido (Pygame) de tiles, móveis e personagem gerados
+por `gerador_tiles.py`.
 
-Rodar: `python assets/preview_tiles.py` (rode `gerador_tiles.py` antes, caso
-ainda não exista nenhum PNG em `tiles/`/`personagem/`).
+Rodar: `python assets/preview_tiles.py`
 
 Controles: ESC ou fechar a janela para sair.
 """
@@ -15,28 +14,31 @@ import pygame
 
 PASTA_ASSETS = Path(__file__).resolve().parent
 PASTA_TILES = PASTA_ASSETS / "tiles"
+PASTA_OBJETOS = PASTA_TILES / "objetos"
 PASTA_PERSONAGEM = PASTA_ASSETS / "personagem"
 
-ESCALA = 6  # amplia os sprites (nativamente pequenos, 16px) para caberem na tela
-ESPACAMENTO = 14
-COLUNAS = 7
+ESCALA = 4
+ESPACAMENTO = 12
+COLUNAS = 6
 COR_FUNDO = (30, 30, 32)
 COR_TEXTO = (220, 220, 220)
 COR_GRADE_CELULA = (55, 55, 58)
 
-# Altura de referência: o personagem (21px) é o sprite mais alto do conjunto.
-_ALTURA_SPRITE_REF_PX = 21
+# Célula larga o bastante para o guarda-roupa / cama (5 tiles * 16 * escala)
+_LARGURA_CELULA_REF = 5 * 16
+_ALTURA_SPRITE_REF_PX = 5 * 16
 
 
 def _listar_imagens() -> list[Path]:
-    return sorted(PASTA_TILES.glob("*.png")) + sorted(PASTA_PERSONAGEM.glob("*.png"))
+    tiles = sorted(PASTA_TILES.glob("*.png"))
+    objetos = sorted(PASTA_OBJETOS.glob("*.png")) if PASTA_OBJETOS.exists() else []
+    personagem = sorted(PASTA_PERSONAGEM.glob("*.png"))
+    return tiles + objetos + personagem
 
 
 def _carregar_ampliado(caminho: Path) -> pygame.Surface:
     original = pygame.image.load(str(caminho)).convert_alpha()
     tamanho_ampliado = (original.get_width() * ESCALA, original.get_height() * ESCALA)
-    # scale (não smoothscale) preserva o look "pixel perfeito", sem
-    # anti-aliasing/gradientes - consistente com a direção de arte.
     return pygame.transform.scale(original, tamanho_ampliado)
 
 
@@ -44,26 +46,27 @@ def main() -> None:
     arquivos = _listar_imagens()
     if not arquivos:
         print(
-            "Nenhum PNG encontrado em 'tiles/' ou 'personagem/'.\n"
+            "Nenhum PNG encontrado.\n"
             "Rode antes: python assets/gerador_tiles.py"
         )
         return
 
     pygame.init()
     pygame.display.set_caption("Maptale - Preview dos tiles")
-    fonte = pygame.font.SysFont(None, 18)
+    fonte = pygame.font.SysFont(None, 16)
 
-    altura_celula_sprite = _ALTURA_SPRITE_REF_PX * ESCALA
-    largura_celula = 16 * ESCALA + ESPACAMENTO
-    altura_celula = altura_celula_sprite + ESPACAMENTO + 18  # + espaço pro rótulo
+    largura_celula = _LARGURA_CELULA_REF * ESCALA + ESPACAMENTO
+    altura_celula = _ALTURA_SPRITE_REF_PX * ESCALA + ESPACAMENTO + 18
 
-    linhas = -(-len(arquivos) // COLUNAS)  # divisão com arredondamento pra cima
-    largura_janela = COLUNAS * largura_celula + ESPACAMENTO
-    altura_janela = linhas * altura_celula + ESPACAMENTO
+    linhas = -(-len(arquivos) // COLUNAS)
+    largura_janela = min(COLUNAS * largura_celula + ESPACAMENTO, 1400)
+    altura_janela = min(linhas * altura_celula + ESPACAMENTO, 900)
 
     tela = pygame.display.set_mode((largura_janela, altura_janela))
-
     itens = [(caminho.stem, _carregar_ampliado(caminho)) for caminho in arquivos]
+
+    scroll_y = 0
+    max_scroll = max(0, linhas * altura_celula + ESPACAMENTO - altura_janela)
 
     relogio = pygame.time.Clock()
     rodando = True
@@ -73,6 +76,8 @@ def main() -> None:
                 rodando = False
             elif evento.type == pygame.KEYDOWN and evento.key == pygame.K_ESCAPE:
                 rodando = False
+            elif evento.type == pygame.MOUSEWHEEL:
+                scroll_y = max(0, min(max_scroll, scroll_y - evento.y * 40))
 
         tela.fill(COR_FUNDO)
 
@@ -80,18 +85,21 @@ def main() -> None:
             coluna = indice % COLUNAS
             linha_idx = indice // COLUNAS
             x = ESPACAMENTO + coluna * largura_celula
-            y = ESPACAMENTO + linha_idx * altura_celula
+            y = ESPACAMENTO + linha_idx * altura_celula - scroll_y
 
-            celula = pygame.Rect(x, y, largura_celula - ESPACAMENTO // 2, altura_celula - ESPACAMENTO // 2)
+            if y + altura_celula < 0 or y > altura_janela:
+                continue
+
+            celula = pygame.Rect(
+                x, y, largura_celula - ESPACAMENTO // 2, altura_celula - ESPACAMENTO // 2
+            )
             pygame.draw.rect(tela, COR_GRADE_CELULA, celula, border_radius=4)
 
-            # Sprites mais baixos que a referência (tiles) ficam alinhados
-            # pela base, como ficariam no jogo (personagem "de pé" no tile).
-            pos_y = y + (altura_celula_sprite - superficie.get_height())
+            pos_y = y + (_ALTURA_SPRITE_REF_PX * ESCALA - superficie.get_height())
             tela.blit(superficie, (x, pos_y))
 
             rotulo = fonte.render(nome, True, COR_TEXTO)
-            tela.blit(rotulo, (x, y + altura_celula_sprite + 2))
+            tela.blit(rotulo, (x, y + _ALTURA_SPRITE_REF_PX * ESCALA + 2))
 
         pygame.display.flip()
         relogio.tick(30)
